@@ -1,18 +1,56 @@
 # OpenMessage
 
-Open-source Google Messages client for macOS with built-in MCP server.
+Local-first universal message database with built-in MCP server. Ingests messages from SMS/RCS (Google Messages), Google Chat, iMessage, and WhatsApp.
 
 ## Architecture
 
 ```
-├── cmd/              Go CLI commands (pair, serve)
-├── internal/         Go backend (app, client, db, web, tools)
+├── cmd/              Go CLI commands (pair, serve, send, import)
+├── internal/
+│   ├── app/          Bootstrap, data dir, backfill
+│   ├── client/       libgm Google Messages protocol
+│   ├── db/           SQLite store (conversations, messages, contacts, unified_contacts, drafts)
+│   ├── importer/     Multi-platform import adapters (gchat, imessage, whatsapp)
+│   ├── story/        Stats computation + narrative story generation
+│   ├── tools/        MCP tools (13 tools)
+│   └── web/          HTTP API + embedded React UI
 ├── macos/            Swift macOS app wrapper
-│   ├── OpenMessage/ Swift package (BackendManager, PairingView, etc.)
+│   ├── OpenMessage/  Swift package (BackendManager, PairingView, etc.)
 │   └── build.sh      Builds universal binary + .app + .dmg
 ├── site/             Static website (deployed to openmessage.ai)
 └── vercel.json       Vercel config (root — NOT site/vercel.json)
 ```
+
+## Multi-platform import
+
+```bash
+openmessage import gchat /path/to/Takeout/Google\ Chat/Groups/ --email you@gmail.com
+openmessage import gchat-conversation /path/to/messages.json --email you@gmail.com
+openmessage import imessage                     # reads ~/Library/Messages/chat.db (needs Full Disk Access)
+openmessage import whatsapp /path/to/chat.txt --name "Your Name"
+```
+
+### MCP tools
+
+13 tools registered:
+- `get_messages`, `get_conversation`, `search_messages` — cross-platform by default
+- `list_conversations` — optional `source_platform` filter (sms, gchat, imessage, whatsapp)
+- `get_person_messages` — all messages with a person across all platforms
+- `import_messages` — import from any supported source
+- `conversation_stats` — volume, heatmap, phrases, response times, gaps
+- `generate_story` — narrative chapters with optional Claude API enhancement
+- `send_message`, `draft_message`, `download_media`, `list_contacts`, `get_status`
+
+### HTTP API
+
+- `GET /api/stats/{conversation_id}` — conversation statistics JSON
+- `GET /api/story/{conversation_id}?style=intimate&api_key=...` — generated story JSON
+- `GET /api/conversations?limit=50` — list all conversations (all platforms)
+- `GET /api/search?q=...` — search across all platforms
+
+### Schema
+
+Messages and conversations have `source_platform` (sms/gchat/imessage/whatsapp/signal/telegram) and messages have `source_id` for dedup. Unified contacts table maps people across platforms.
 
 ## Vercel deployment (openmessage.ai)
 
@@ -62,6 +100,9 @@ go test ./... -v       # All tests
 ## Key files
 
 - `internal/app/app.go` — data dir resolution (`OPENMESSAGES_DATA_DIR` env var, defaults to `~/.local/share/openmessage`)
+- `internal/db/db.go` — schema, structs, migration
+- `internal/importer/` — gchat.go, imessage.go, whatsapp.go
+- `internal/story/stats.go` — conversation statistics computation
+- `internal/story/generate.go` — narrative story generation (local or Claude API)
 - `internal/client/events.go` — handles Google Messages protocol events
 - `macos/OpenMessage/Sources/BackendManager.swift` — launches Go backend, manages app state
-- `macos/OpenMessage/Sources/PairingView.swift` — QR code pairing UI

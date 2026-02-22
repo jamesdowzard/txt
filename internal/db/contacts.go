@@ -129,6 +129,61 @@ func (s *Store) ListContactsFromConversations(query string, limit int) ([]*Conta
 	return contacts, rows.Err()
 }
 
+// UpsertUnifiedContact creates or updates a unified contact.
+func (s *Store) UpsertUnifiedContact(c *UnifiedContact) error {
+	_, err := s.db.Exec(`
+		INSERT INTO unified_contacts (unified_id, display_name, identifiers)
+		VALUES (?, ?, ?)
+		ON CONFLICT(unified_id) DO UPDATE SET
+			display_name=excluded.display_name,
+			identifiers=excluded.identifiers
+	`, c.UnifiedID, c.DisplayName, c.Identifiers)
+	return err
+}
+
+// GetUnifiedContact retrieves a unified contact by ID.
+func (s *Store) GetUnifiedContact(id string) (*UnifiedContact, error) {
+	c := &UnifiedContact{}
+	err := s.db.QueryRow(`
+		SELECT unified_id, display_name, identifiers
+		FROM unified_contacts WHERE unified_id = ?
+	`, id).Scan(&c.UnifiedID, &c.DisplayName, &c.Identifiers)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+// ListUnifiedContacts lists unified contacts, optionally filtered by name.
+func (s *Store) ListUnifiedContacts(query string, limit int) ([]*UnifiedContact, error) {
+	var q string
+	var args []any
+	if query != "" {
+		q = `SELECT unified_id, display_name, identifiers FROM unified_contacts WHERE display_name LIKE ? ORDER BY display_name LIMIT ?`
+		args = []any{"%" + query + "%", limit}
+	} else {
+		q = `SELECT unified_id, display_name, identifiers FROM unified_contacts ORDER BY display_name LIMIT ?`
+		args = []any{limit}
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var contacts []*UnifiedContact
+	for rows.Next() {
+		c := &UnifiedContact{}
+		if err := rows.Scan(&c.UnifiedID, &c.DisplayName, &c.Identifiers); err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, c)
+	}
+	return contacts, rows.Err()
+}
+
 func toLower(s string) string {
 	b := make([]byte, len(s))
 	for i := 0; i < len(s); i++ {

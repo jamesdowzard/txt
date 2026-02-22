@@ -14,7 +14,7 @@ import (
 
 func searchMessagesTool() mcp.Tool {
 	return mcp.NewTool("search_messages",
-		mcp.WithDescription("Search messages by text content across all conversations"),
+		mcp.WithDescription("Search messages by text content across all conversations and platforms (SMS, Google Chat, iMessage, WhatsApp)"),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Search text")),
 		mcp.WithString("phone_number", mcp.Description("Filter by phone number")),
 		mcp.WithNumber("limit", mcp.Description("Maximum results (default 20)")),
@@ -59,7 +59,11 @@ func searchMessagesHandler(a *app.App) server.ToolHandlerFunc {
 				sender = "Unknown"
 			}
 			display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
-			fmt.Fprintf(&sb, "[%s] %s %s (conv: %s): «%s»\n", ts, direction, sender, m.ConversationID, display)
+			platform := ""
+			if m.SourcePlatform != "" && m.SourcePlatform != "sms" {
+				platform = fmt.Sprintf(" [%s]", m.SourcePlatform)
+			}
+			fmt.Fprintf(&sb, "[%s] %s %s%s (conv: %s): «%s»\n", ts, direction, sender, platform, m.ConversationID, display)
 		}
 		return textResult(sb.String()), nil
 	}

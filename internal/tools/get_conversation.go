@@ -44,7 +44,11 @@ func getConversationHandler(a *app.App) server.ToolHandlerFunc {
 		// Show conversation info
 		conv, err := a.Store.GetConversation(convID)
 		if err == nil && conv != nil {
-			fmt.Fprintf(&sb, "Conversation: %s (ID: %s)\n", conv.Name, conv.ConversationID)
+			platform := conv.SourcePlatform
+			if platform == "" {
+				platform = "sms"
+			}
+			fmt.Fprintf(&sb, "Conversation: %s (ID: %s, platform: %s)\n", conv.Name, conv.ConversationID, platform)
 			if conv.IsGroup {
 				sb.WriteString("Type: Group\n")
 			}

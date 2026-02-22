@@ -18,6 +18,7 @@ import (
 
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/maxghenis/openmessage/internal/story"
 )
 
 //go:embed static/*
@@ -578,6 +579,54 @@ func APIHandlerFull(store *db.Store, cli *client.Client, logger zerolog.Logger, 
 			return
 		}
 		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/api/stats/", func(w http.ResponseWriter, r *http.Request) {
+		convID := strings.TrimPrefix(r.URL.Path, "/api/stats/")
+		if convID == "" {
+			httpError(w, "conversation_id required", 400)
+			return
+		}
+		msgs, err := store.GetMessagesByConversation(convID, 100000)
+		if err != nil {
+			httpError(w, "get messages: "+err.Error(), 500)
+			return
+		}
+		if len(msgs) == 0 {
+			httpError(w, "no messages found", 404)
+			return
+		}
+		stats := story.ComputeStats(msgs)
+		writeJSON(w, stats)
+	})
+
+	mux.HandleFunc("/api/story/", func(w http.ResponseWriter, r *http.Request) {
+		convID := strings.TrimPrefix(r.URL.Path, "/api/story/")
+		if convID == "" {
+			httpError(w, "conversation_id required", 400)
+			return
+		}
+		msgs, err := store.GetMessagesByConversation(convID, 100000)
+		if err != nil {
+			httpError(w, "get messages: "+err.Error(), 500)
+			return
+		}
+		if len(msgs) == 0 {
+			httpError(w, "no messages found", 404)
+			return
+		}
+		apiKey := r.URL.Query().Get("api_key")
+		style := r.URL.Query().Get("style")
+		s, err := story.Generate(msgs, story.GenerateConfig{
+			Style:             style,
+			APIKey:            apiKey,
+			MaxSampleMessages: 200,
+		})
+		if err != nil {
+			httpError(w, "generate story: "+err.Error(), 500)
+			return
+		}
+		writeJSON(w, s)
 	})
 
 	mux.HandleFunc("/api/backfill", func(w http.ResponseWriter, r *http.Request) {

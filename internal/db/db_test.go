@@ -501,6 +501,50 @@ func TestDeleteTmpMessages(t *testing.T) {
 	}
 }
 
+func TestSeedDemo(t *testing.T) {
+	store, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create db: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SeedDemo(); err != nil {
+		t.Fatalf("SeedDemo: %v", err)
+	}
+
+	// Should have 8 conversations
+	convs, err := store.ListConversations(100)
+	if err != nil {
+		t.Fatalf("list conversations: %v", err)
+	}
+	if len(convs) != 8 {
+		t.Errorf("expected 8 conversations, got %d", len(convs))
+	}
+
+	// Should have 7 contacts
+	contacts, err := store.ListContacts("", 100)
+	if err != nil {
+		t.Fatalf("list contacts: %v", err)
+	}
+	if len(contacts) != 7 {
+		t.Errorf("expected 7 contacts, got %d", len(contacts))
+	}
+
+	// Check a specific conversation has messages
+	msgs, err := store.GetMessagesByConversation("conv1", 100)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 6 {
+		t.Errorf("expected 6 messages in conv1, got %d", len(msgs))
+	}
+
+	// Idempotent — running again should not error
+	if err := store.SeedDemo(); err != nil {
+		t.Fatalf("SeedDemo idempotent: %v", err)
+	}
+}
+
 func TestGetMessagesNoFilters(t *testing.T) {
 	store, err := New(":memory:")
 	if err != nil {

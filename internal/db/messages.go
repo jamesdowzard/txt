@@ -5,10 +5,13 @@ import (
 	"strings"
 )
 
+// messageColumns is the canonical column list for SELECT queries on messages.
+const messageColumns = `message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id, source_platform, source_id`
+
 func (s *Store) UpsertMessage(m *Message) error {
 	_, err := s.db.Exec(`
-		INSERT INTO messages (message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id, source_platform, source_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(message_id) DO UPDATE SET
 			conversation_id=excluded.conversation_id,
 			sender_name=excluded.sender_name,
@@ -21,14 +24,16 @@ func (s *Store) UpsertMessage(m *Message) error {
 			mime_type=excluded.mime_type,
 			decryption_key=excluded.decryption_key,
 			reactions=excluded.reactions,
-			reply_to_id=excluded.reply_to_id
-	`, m.MessageID, m.ConversationID, m.SenderName, m.SenderNumber, m.Body, m.TimestampMS, m.Status, m.IsFromMe, m.MediaID, m.MimeType, m.DecryptionKey, m.Reactions, m.ReplyToID)
+			reply_to_id=excluded.reply_to_id,
+			source_platform=excluded.source_platform,
+			source_id=excluded.source_id
+	`, m.MessageID, m.ConversationID, m.SenderName, m.SenderNumber, m.Body, m.TimestampMS, m.Status, m.IsFromMe, m.MediaID, m.MimeType, m.DecryptionKey, m.Reactions, m.ReplyToID, m.SourcePlatform, m.SourceID)
 	return err
 }
 
 func (s *Store) GetMessagesByConversation(conversationID string, limit int) ([]*Message, error) {
 	rows, err := s.db.Query(`
-		SELECT message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id
+		SELECT `+messageColumns+`
 		FROM messages
 		WHERE conversation_id = ?
 		ORDER BY timestamp_ms DESC
@@ -58,7 +63,7 @@ func (s *Store) GetMessages(phoneNumber string, afterMS, beforeMS int64, limit i
 		args = append(args, beforeMS)
 	}
 
-	query := `SELECT message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id FROM messages`
+	query := `SELECT ` + messageColumns + ` FROM messages`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -85,7 +90,7 @@ func (s *Store) SearchMessages(query, phoneNumber string, limit int) ([]*Message
 		args = append(args, phoneNumber)
 	}
 
-	q := `SELECT message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id FROM messages`
+	q := `SELECT ` + messageColumns + ` FROM messages`
 	if len(conditions) > 0 {
 		q += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -102,11 +107,11 @@ func (s *Store) SearchMessages(query, phoneNumber string, limit int) ([]*Message
 
 func (s *Store) GetMessageByID(messageID string) (*Message, error) {
 	row := s.db.QueryRow(`
-		SELECT message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id
+		SELECT `+messageColumns+`
 		FROM messages WHERE message_id = ?
 	`, messageID)
 	m := &Message{}
-	err := row.Scan(&m.MessageID, &m.ConversationID, &m.SenderName, &m.SenderNumber, &m.Body, &m.TimestampMS, &m.Status, &m.IsFromMe, &m.MediaID, &m.MimeType, &m.DecryptionKey, &m.Reactions, &m.ReplyToID)
+	err := row.Scan(&m.MessageID, &m.ConversationID, &m.SenderName, &m.SenderNumber, &m.Body, &m.TimestampMS, &m.Status, &m.IsFromMe, &m.MediaID, &m.MimeType, &m.DecryptionKey, &m.Reactions, &m.ReplyToID, &m.SourcePlatform, &m.SourceID)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -129,6 +134,18 @@ func (s *Store) DeleteTmpMessages(conversationID string) (int64, error) {
 	return result.RowsAffected()
 }
 
+// MessageCount returns the total number of messages, optionally filtered by source platform.
+func (s *Store) MessageCount(sourcePlatform string) (int, error) {
+	var count int
+	var err error
+	if sourcePlatform != "" {
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_platform = ?`, sourcePlatform).Scan(&count)
+	} else {
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count)
+	}
+	return count, err
+}
+
 func scanMessages(rows interface {
 	Next() bool
 	Scan(...any) error
@@ -137,7 +154,7 @@ func scanMessages(rows interface {
 	var msgs []*Message
 	for rows.Next() {
 		m := &Message{}
-		if err := rows.Scan(&m.MessageID, &m.ConversationID, &m.SenderName, &m.SenderNumber, &m.Body, &m.TimestampMS, &m.Status, &m.IsFromMe, &m.MediaID, &m.MimeType, &m.DecryptionKey, &m.Reactions, &m.ReplyToID); err != nil {
+		if err := rows.Scan(&m.MessageID, &m.ConversationID, &m.SenderName, &m.SenderNumber, &m.Body, &m.TimestampMS, &m.Status, &m.IsFromMe, &m.MediaID, &m.MimeType, &m.DecryptionKey, &m.Reactions, &m.ReplyToID, &m.SourcePlatform, &m.SourceID); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
