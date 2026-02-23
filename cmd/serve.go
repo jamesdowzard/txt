@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/maxghenis/openmessage/internal/importer"
 	"github.com/maxghenis/openmessage/internal/tools"
 	"github.com/maxghenis/openmessage/internal/web"
 )
@@ -38,6 +39,29 @@ func RunServe(logger zerolog.Logger) error {
 	} else {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
+
+	// Sync WhatsApp and iMessage on startup (incremental, background)
+	go func() {
+		wa := &importer.WhatsAppNative{MyName: "Max"}
+		if result, err := wa.ImportFromDB(a.Store); err != nil {
+			logger.Warn().Err(err).Msg("WhatsApp sync failed")
+		} else if result.MessagesImported > 0 {
+			logger.Info().
+				Int("messages", result.MessagesImported).
+				Int("conversations", result.ConversationsCreated).
+				Msg("WhatsApp sync complete")
+		}
+
+		im := &importer.IMessage{MyName: "Max"}
+		if result, err := im.ImportFromDB(a.Store); err != nil {
+			logger.Warn().Err(err).Msg("iMessage sync failed")
+		} else if result.MessagesImported > 0 {
+			logger.Info().
+				Int("messages", result.MessagesImported).
+				Int("conversations", result.ConversationsCreated).
+				Msg("iMessage sync complete")
+		}
+	}()
 
 	// Start web server
 	port := os.Getenv("OPENMESSAGES_PORT")

@@ -70,22 +70,40 @@ func RunImport(logger zerolog.Logger, source string, args []string) error {
 		return nil
 
 	case "whatsapp":
-		if len(args) < 1 {
-			return fmt.Errorf("usage: openmessage import whatsapp <path-to-chat.txt> [--name YourName]")
+		// Check if first arg looks like a file path (text export) or if no path given (native DB)
+		if len(args) >= 1 && !strings.HasPrefix(args[0], "--") {
+			// Text export mode
+			filePath := args[0]
+			myName := flagValue(args[1:], "--name")
+			f, err := os.Open(filePath)
+			if err != nil {
+				return fmt.Errorf("open file: %w", err)
+			}
+			defer f.Close()
+			imp := &importer.WhatsApp{MyName: myName}
+			result, err := imp.Import(a.Store, f)
+			if err != nil {
+				return fmt.Errorf("import whatsapp: %w", err)
+			}
+			printResult("WhatsApp (text export)", result)
+			return nil
 		}
-		filePath := args[0]
-		myName := flagValue(args[1:], "--name")
-		f, err := os.Open(filePath)
+		// Native DB mode (reads WhatsApp Desktop's ChatStorage.sqlite)
+		dbPath := flagValue(args, "--db")
+		myName := flagValue(args, "--name")
+		if myName == "" {
+			myName = "Me"
+		}
+		imp := &importer.WhatsAppNative{DBPath: dbPath, MyName: myName}
+		// --full disables incremental sync
+		if hasFlag(args, "--full") {
+			imp.SinceMS = -1 // negative = explicitly full
+		}
+		result, err := imp.ImportFromDB(a.Store)
 		if err != nil {
-			return fmt.Errorf("open file: %w", err)
+			return fmt.Errorf("import whatsapp native: %w", err)
 		}
-		defer f.Close()
-		imp := &importer.WhatsApp{MyName: myName}
-		result, err := imp.Import(a.Store, f)
-		if err != nil {
-			return fmt.Errorf("import whatsapp: %w", err)
-		}
-		printResult("WhatsApp", result)
+		printResult("WhatsApp (native)", result)
 		return nil
 
 	default:
@@ -104,6 +122,16 @@ func printResult(source string, result *importer.ImportResult) {
 			fmt.Printf("    - %s\n", e)
 		}
 	}
+}
+
+// hasFlag checks if a boolean flag is present in args.
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
 }
 
 // flagValue extracts the value after a flag like --email from args.

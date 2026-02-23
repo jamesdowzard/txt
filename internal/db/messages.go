@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -144,6 +145,20 @@ func (s *Store) MessageCount(sourcePlatform string) (int, error) {
 		err = s.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count)
 	}
 	return count, err
+}
+
+// LatestTimestamp returns the most recent timestamp_ms for a given source platform.
+// Returns 0 if no messages exist for that platform.
+func (s *Store) LatestTimestamp(sourcePlatform string) (int64, error) {
+	var ts sql.NullInt64
+	err := s.db.QueryRow(
+		`SELECT MAX(timestamp_ms) FROM messages WHERE source_platform = ?`,
+		sourcePlatform,
+	).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return 0, err
+	}
+	return ts.Int64, nil
 }
 
 func scanMessages(rows interface {
