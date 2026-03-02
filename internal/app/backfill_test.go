@@ -196,8 +196,8 @@ func TestDeepBackfillSinglePageSingleFolder(t *testing.T) {
 	if progress.MessagesFound != 3 {
 		t.Errorf("progress.MessagesFound = %d, want 3", progress.MessagesFound)
 	}
-	if progress.Phase != "done" {
-		t.Errorf("progress.Phase = %q, want done", progress.Phase)
+	if progress.Phase != BackfillPhaseDone {
+		t.Errorf("progress.Phase = %q, want %q", progress.Phase, BackfillPhaseDone)
 	}
 }
 
@@ -524,8 +524,8 @@ func TestDeepBackfillProgressCallback(t *testing.T) {
 	a.DeepBackfill()
 
 	progress := a.GetBackfillProgress()
-	if !progress.Running && progress.Phase != "done" {
-		t.Errorf("expected phase=done after completion, got %q", progress.Phase)
+	if !progress.Running && progress.Phase != BackfillPhaseDone {
+		t.Errorf("expected phase=%q after completion, got %q", BackfillPhaseDone, progress.Phase)
 	}
 	if progress.FoldersScanned != 3 { // always scans 3 folders
 		t.Errorf("FoldersScanned = %d, want 3", progress.FoldersScanned)
@@ -550,8 +550,8 @@ func TestDeepBackfillEmptyFolders(t *testing.T) {
 	if progress.ConversationsFound != 0 {
 		t.Errorf("ConversationsFound = %d, want 0", progress.ConversationsFound)
 	}
-	if progress.Phase != "done" {
-		t.Errorf("Phase = %q, want done", progress.Phase)
+	if progress.Phase != BackfillPhaseDone {
+		t.Errorf("Phase = %q, want %q", progress.Phase, BackfillPhaseDone)
 	}
 }
 
@@ -605,8 +605,8 @@ func TestDeepBackfillNilClient(t *testing.T) {
 	a.DeepBackfill()
 
 	progress := a.GetBackfillProgress()
-	if progress.Phase == "done" {
-		t.Error("expected early return (not phase=done) when client is nil")
+	if progress.Phase == BackfillPhaseDone {
+		t.Errorf("expected early return (not phase=%q) when client is nil", BackfillPhaseDone)
 	}
 }
 
