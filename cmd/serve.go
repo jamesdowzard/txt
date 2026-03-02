@@ -83,11 +83,13 @@ func RunServe(logger zerolog.Logger) error {
 		mcpserver.WithStaticBasePath("/mcp"),
 	)
 
-	httpHandler := web.APIHandlerFull(a.Store, a.Client, logger, sseSrv,
-		func() bool { return a.Connected.Load() },
-		a.Unpair,
-		a.DeepBackfill,
-	)
+	httpHandler := web.APIHandlerWithOptions(a.Store, a.Client, logger, sseSrv, web.APIOptions{
+		IsConnected:    func() bool { return a.Connected.Load() },
+		Unpair:         a.Unpair,
+		OnDeepBackfill: a.DeepBackfill,
+		BackfillStatus: func() any { return a.GetBackfillProgress() },
+		BackfillPhone:  a.BackfillConversationByPhone,
+	})
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return fmt.Errorf("listen on port %s: %w", port, err)

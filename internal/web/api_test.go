@@ -694,3 +694,154 @@ func TestStaticFileServing(t *testing.T) {
 		t.Fatalf("got content-type %q, want text/html", ct)
 	}
 }
+
+func TestBackfillStatusDefault(t *testing.T) {
+	ts := newTestServer(t)
+
+	resp, err := http.Get(ts.server.URL + "/api/backfill/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+
+	var status map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status["running"] != false {
+		t.Error("expected running=false")
+	}
+}
+
+func TestBackfillStatusWithCallback(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	logger := zerolog.Nop()
+	h := APIHandlerWithOptions(store, nil, logger, nil, APIOptions{
+		BackfillStatus: func() any {
+			return map[string]any{
+				"running":             true,
+				"phase":               "messages",
+				"conversations_found": 42,
+			}
+		},
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/backfill/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var status map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status["running"] != true {
+		t.Error("expected running=true")
+	}
+	if status["phase"] != "messages" {
+		t.Errorf("phase = %v, want messages", status["phase"])
+	}
+	if status["conversations_found"] != float64(42) {
+		t.Errorf("conversations_found = %v, want 42", status["conversations_found"])
+	}
+}
+
+func TestBackfillPhoneRequiresPost(t *testing.T) {
+	ts := newTestServer(t)
+
+	resp, err := http.Get(ts.server.URL + "/api/backfill/phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 405 {
+		t.Fatalf("got status %d, want 405 for GET", resp.StatusCode)
+	}
+}
+
+func TestBackfillPhoneRequiresPhoneNumber(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	logger := zerolog.Nop()
+	h := APIHandlerWithOptions(store, nil, logger, nil, APIOptions{
+		BackfillPhone: func(phone string) error { return nil },
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	body := `{}`
+	resp, err := http.Post(srv.URL+"/api/backfill/phone", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 400 {
+		t.Fatalf("got status %d, want 400 for missing phone_number", resp.StatusCode)
+	}
+}
+
+func TestBackfillPhoneNotAvailable(t *testing.T) {
+	ts := newTestServer(t) // no BackfillPhone callback
+
+	body := `{"phone_number": "+14157934268"}`
+	resp, err := http.Post(ts.server.URL+"/api/backfill/phone", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 501 {
+		t.Fatalf("got status %d, want 501 when not available", resp.StatusCode)
+	}
+}
+
+func TestBackfillPhoneSuccess(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var calledWith string
+	logger := zerolog.Nop()
+	h := APIHandlerWithOptions(store, nil, logger, nil, APIOptions{
+		BackfillPhone: func(phone string) error {
+			calledWith = phone
+			return nil
+		},
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	body := `{"phone_number": "+14157934268"}`
+	resp, err := http.Post(srv.URL+"/api/backfill/phone", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if calledWith != "+14157934268" {
+		t.Errorf("BackfillPhone called with %q, want +14157934268", calledWith)
+	}
+}

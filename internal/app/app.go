@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -11,6 +12,91 @@ import (
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
 )
+
+// BackfillPhase represents the current phase of a deep backfill.
+type BackfillPhase string
+
+const (
+	BackfillPhaseIdle     BackfillPhase = ""
+	BackfillPhaseFolders  BackfillPhase = "folders"
+	BackfillPhaseMessages BackfillPhase = "messages"
+	BackfillPhaseContacts BackfillPhase = "contacts"
+	BackfillPhaseDone     BackfillPhase = "done"
+)
+
+const maxErrorDetails = 100
+
+// BackfillProgress tracks the current state of a deep backfill operation.
+type BackfillProgress struct {
+	mu                 sync.Mutex
+	Running            bool          `json:"running"`
+	Phase              BackfillPhase `json:"phase"`
+	FoldersScanned     int           `json:"folders_scanned"`
+	ConversationsFound int           `json:"conversations_found"`
+	MessagesFound      int           `json:"messages_found"`
+	ContactsChecked    int           `json:"contacts_checked"`
+	Errors             int           `json:"errors"`
+	ErrorDetails       []string      `json:"error_details,omitempty"`
+}
+
+// reset clears all fields for a fresh backfill run.
+func (p *BackfillProgress) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Running = true
+	p.Phase = BackfillPhaseFolders
+	p.FoldersScanned = 0
+	p.ConversationsFound = 0
+	p.MessagesFound = 0
+	p.ContactsChecked = 0
+	p.Errors = 0
+	p.ErrorDetails = nil
+}
+
+// setPhase updates the current phase.
+func (p *BackfillProgress) setPhase(phase BackfillPhase) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Phase = phase
+}
+
+// finish marks the backfill as complete.
+func (p *BackfillProgress) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Running = false
+	p.Phase = BackfillPhaseDone
+}
+
+// addError increments the error count and optionally records a detail string.
+func (p *BackfillProgress) addError(detail string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Errors++
+	if detail != "" && len(p.ErrorDetails) < maxErrorDetails {
+		p.ErrorDetails = append(p.ErrorDetails, detail)
+	}
+}
+
+// add increments the given counters atomically.
+func (p *BackfillProgress) add(conversations, messages, contacts, folders int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ConversationsFound += conversations
+	p.MessagesFound += messages
+	p.ContactsChecked += contacts
+	p.FoldersScanned += folders
+}
+
+func (p *BackfillProgress) snapshot() BackfillProgress {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := *p
+	if len(p.ErrorDetails) > 0 {
+		cp.ErrorDetails = append([]string(nil), p.ErrorDetails...)
+	}
+	return cp
+}
 
 type App struct {
 	Client       *client.Client
@@ -20,6 +106,11 @@ type App struct {
 	DataDir      string
 	SessionPath  string
 	Connected    atomic.Bool
+
+	// gmClient is used by backfill methods. If nil, it's derived from Client.GM.
+	// Set this field directly in tests to inject a mock.
+	gmClient         GMClient
+	BackfillProgress BackfillProgress
 }
 
 func DefaultDataDir() string {
@@ -115,6 +206,23 @@ func (a *App) Unpair() error {
 	}
 	a.Logger.Info().Msg("Unpaired — session deleted")
 	return nil
+}
+
+// getGMClient returns the GMClient for backfill operations.
+// Uses the injected mock if set, otherwise wraps the real libgm client.
+func (a *App) getGMClient() GMClient {
+	if a.gmClient != nil {
+		return a.gmClient
+	}
+	if a.Client != nil {
+		return newRealGMClient(a.Client.GM)
+	}
+	return nil
+}
+
+// GetBackfillProgress returns a snapshot of the current backfill progress.
+func (a *App) GetBackfillProgress() BackfillProgress {
+	return a.BackfillProgress.snapshot()
 }
 
 func (a *App) Close() {
