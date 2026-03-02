@@ -21,6 +21,7 @@ func buildTemplate() (*template.Template, error) {
 		"noescape":    func(s string) template.HTML { return template.HTML(s) },
 		"noescapeJS":  func(s string) template.JS { return template.JS(s) },
 		"noescapeCSS": func(s string) template.CSS { return template.CSS(s) },
+		"safeURL":     func(s string) template.URL { return template.URL(s) },
 		"seq24":       func() []int { return makeSeq(24) },
 		"seq7":        func() []int { return makeSeq(7) },
 		"mul":         func(a, b int) int { return a * b },
@@ -953,7 +954,7 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
         <h2>Moments</h2>
         <div class="photo-grid" style="margin-top: 2rem;">
             {{range $.Config.PhotoPaths}}
-            <img src="{{.}}" alt="Photo" loading="lazy">
+            <img src="{{. | safeURL}}" alt="Photo" loading="lazy">
             {{end}}
         </div>
     </div>

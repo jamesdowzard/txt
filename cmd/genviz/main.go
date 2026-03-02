@@ -29,6 +29,8 @@ func main() {
 	bg := flag.String("bg", "", "Background CSS color")
 	style := flag.String("style", "intimate", "Story style")
 	apiKey := flag.String("api-key", "", "Anthropic API key for narrative")
+	photosDir := flag.String("photos", "", "Directory of photos to include in gallery")
+	maxPhotos := flag.Int("max-photos", 30, "Maximum number of photos to include")
 	flag.Parse()
 
 	if *name == "" || *output == "" {
@@ -125,6 +127,17 @@ func main() {
 		}
 	}
 
+	// Encode photos if directory provided
+	var photoDataURIs []string
+	if *photosDir != "" {
+		var err error
+		photoDataURIs, err = viz.EncodePhotosFromDir(*photosDir, *maxPhotos)
+		if err != nil {
+			log.Fatalf("encode photos: %v", err)
+		}
+		fmt.Printf("Encoded %d photos\n", len(photoDataURIs))
+	}
+
 	// Build config
 	config := viz.VizConfig{
 		Person1:         *person1,
@@ -135,6 +148,7 @@ func main() {
 		BackgroundColor: *bg,
 		Timezone:        *timezone,
 		PasswordHash:    *password,
+		PhotoPaths:      photoDataURIs,
 	}
 
 	// Render
