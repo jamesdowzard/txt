@@ -34,14 +34,28 @@ type StatusChecker func() bool
 // UnpairFunc deletes the session and disconnects.
 type UnpairFunc func() error
 
-func APIHandler(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, onDeepBackfill ...func()) http.Handler {
-	return APIHandlerFull(store, cli, logger, mcpHandler, nil, nil, onDeepBackfill...)
+// APIOptions holds optional callbacks for the API handler.
+type APIOptions struct {
+	IsConnected    StatusChecker
+	Unpair         UnpairFunc
+	OnDeepBackfill func()
+	BackfillStatus func() any        // returns a JSON-serializable backfill progress snapshot
+	BackfillPhone  func(string) error // targeted backfill for a single phone number
 }
 
-func APIHandlerFull(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, isConnected StatusChecker, unpair UnpairFunc, onDeepBackfill ...func()) http.Handler {
-	mux := http.NewServeMux()
+// APIHandler creates a handler with minimal options (used by tests).
+func APIHandler(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, onDeepBackfill ...func()) http.Handler {
+	var cb func()
+	if len(onDeepBackfill) > 0 {
+		cb = onDeepBackfill[0]
+	}
+	return APIHandlerWithOptions(store, cli, logger, mcpHandler, APIOptions{
+		OnDeepBackfill: cb,
+	})
+}
 
-	_ = mcpHandler // used in the return wrapper below
+func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, opts APIOptions) http.Handler {
+	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		limit := queryInt(r, "limit", 50)
@@ -634,18 +648,56 @@ func APIHandlerFull(store *db.Store, cli *client.Client, logger zerolog.Logger, 
 			httpError(w, "method not allowed", 405)
 			return
 		}
-		if len(onDeepBackfill) > 0 && onDeepBackfill[0] != nil {
-			go onDeepBackfill[0]()
+		if opts.OnDeepBackfill != nil {
+			go opts.OnDeepBackfill()
 			writeJSON(w, map[string]string{"status": "started"})
 		} else {
 			httpError(w, "deep backfill not available", 501)
 		}
 	})
 
+	mux.HandleFunc("/api/backfill/status", func(w http.ResponseWriter, r *http.Request) {
+		if opts.BackfillStatus != nil {
+			writeJSON(w, opts.BackfillStatus())
+		} else {
+			writeJSON(w, map[string]any{
+				"running": false,
+				"phase":   "idle",
+			})
+		}
+	})
+
+	mux.HandleFunc("/api/backfill/phone", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "method not allowed", 405)
+			return
+		}
+		var req struct {
+			PhoneNumber string `json:"phone_number"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if req.PhoneNumber == "" {
+			httpError(w, "phone_number is required", 400)
+			return
+		}
+		if opts.BackfillPhone == nil {
+			httpError(w, "phone backfill not available", 501)
+			return
+		}
+		if err := opts.BackfillPhone(req.PhoneNumber); err != nil {
+			httpError(w, "backfill phone: "+err.Error(), 502)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		connected := cli != nil
-		if isConnected != nil {
-			connected = isConnected()
+		if opts.IsConnected != nil {
+			connected = opts.IsConnected()
 		}
 		writeJSON(w, map[string]any{
 			"connected": connected,
@@ -657,8 +709,8 @@ func APIHandlerFull(store *db.Store, cli *client.Client, logger zerolog.Logger, 
 			httpError(w, "method not allowed", 405)
 			return
 		}
-		if unpair != nil {
-			if err := unpair(); err != nil {
+		if opts.Unpair != nil {
+			if err := opts.Unpair(); err != nil {
 				httpError(w, "unpair: "+err.Error(), 500)
 				return
 			}
