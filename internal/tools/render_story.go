@@ -32,6 +32,7 @@ func renderStoryTool() mcp.Tool {
 		mcp.WithString("background_color", mcp.Description("Background CSS color (e.g. '#0c0a09')")),
 		mcp.WithString("photos_dir", mcp.Description("Directory containing photos to include in the gallery")),
 		mcp.WithNumber("max_photos", mcp.Description("Maximum number of photos to include (default 20)")),
+		mcp.WithString("photo_paths", mcp.Description("JSON array of specific photo file paths to include (overrides photos_dir). Use this for curated photo selection.")),
 		mcp.WithDestructiveHintAnnotation(false),
 	)
 }
@@ -110,15 +111,26 @@ func renderStoryHandler(a *app.App) server.ToolHandlerFunc {
 			PasswordHash:    strArg(args, "password"),
 		}
 
-		// Encode photos if provided
+		// Encode photos: photo_paths (curated list) takes priority over photos_dir
+		photoPathsJSON := strArg(args, "photo_paths")
 		photosDir := strArg(args, "photos_dir")
-		if photosDir != "" {
+		if photoPathsJSON != "" {
+			var paths []string
+			if err := json.Unmarshal([]byte(photoPathsJSON), &paths); err != nil {
+				return errorResult(fmt.Sprintf("invalid photo_paths JSON: %v", err)), nil
+			}
+			photos, err := viz.EncodePhotosFromPaths(paths)
+			if err != nil {
+				return errorResult(fmt.Sprintf("encode photos: %v", err)), nil
+			}
+			config.Photos = photos
+		} else if photosDir != "" {
 			maxPhotos := intArg(args, "max_photos", 20)
 			photos, err := viz.EncodePhotosFromDir(photosDir, maxPhotos)
 			if err != nil {
 				return errorResult(fmt.Sprintf("encode photos: %v", err)), nil
 			}
-			config.PhotoPaths = photos
+			config.Photos = photos
 		}
 
 		// Render HTML
@@ -166,8 +178,8 @@ func renderStoryHandler(a *app.App) server.ToolHandlerFunc {
 		if config.PasswordHash != "" {
 			summary += "Password gate: enabled\n"
 		}
-		if len(config.PhotoPaths) > 0 {
-			summary += fmt.Sprintf("Photos: %d\n", len(config.PhotoPaths))
+		if len(config.Photos) > 0 {
+			summary += fmt.Sprintf("Photos: %d\n", len(config.Photos))
 		}
 
 		return textResult(summary), nil

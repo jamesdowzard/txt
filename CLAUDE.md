@@ -44,7 +44,7 @@ openmessage import whatsapp /path/to/chat.txt --name "Your Name"
 - `person_stats` — cross-platform stats for all 1:1 messages with a person (merges + deduplicates)
 - `generate_person_story` — cross-platform narrative story for a person (merges + deduplicates)
 - `generate_viz` — self-contained HTML visualization combining data dashboards + narrative (see below)
-- `render_story` — render a pre-built Story JSON into HTML viz (used by agentic story generation)
+- `render_story` — render a pre-built Story JSON into HTML viz; supports `photo_paths` (curated list) or `photos_dir`
 - `send_message`, `draft_message`, `download_media`, `list_contacts`, `get_status`
 
 ### HTTP API
@@ -107,7 +107,7 @@ go test ./... -v       # All tests
 
 Generates a self-contained HTML file combining data dashboards with narrative chapters. Output is deployable to Vercel or viewable locally.
 
-**Sections**: password gate, hero, timeline nav, narrative chapters (early/middle/late), monthly volume chart (Chart.js), sender split donut, response times, hour-of-week heatmap, phrase cloud (colored by sender ratio), longest gap callout, photo gallery, interludes, closing.
+**Sections**: password gate, hero, timeline nav, narrative chapters (early/middle/late), monthly volume chart (Chart.js), sender split donut, response times, hour-of-week heatmap, phrase cloud (colored by sender ratio), longest gap callout, interspersed photo breaks (chronologically aligned), interludes, closing.
 
 **Key parameters**: `name` (person to search), `output_path`, `timezone` (default ET), `password`, `api_key` (for Claude-generated narrative), colors (`primary_color`, `secondary_color`, etc.).
 
@@ -115,7 +115,7 @@ Generates a self-contained HTML file combining data dashboards with narrative ch
 - `internal/viz/config.go` — `VizConfig` struct, section ordering, color theming
 - `internal/viz/render.go` — `RenderHTML()` orchestrator, Chart.js data building
 - `internal/viz/template.go` — Go html/template with all CSS/JS inline (except CDN fonts + Chart.js)
-- `internal/viz/photos.go` — `FindMediaMessages()` for photo gallery
+- `internal/viz/photos.go` — `Photo` struct, `EncodePhotosFromDir/Paths()`, date parsing from filenames, chronological sorting
 - `internal/tools/viz.go` — MCP tool handler
 
 **Stats engine extensions** (`internal/story/stats.go`):
@@ -128,6 +128,7 @@ Claude Code slash command that produces fact-grounded relationship visualization
 
 1. `person_stats` → identify 4-8 pivotal periods from volume patterns
 2. `get_person_messages_range` → deep-dive into each period's actual messages
+2.5. Photo curation → visually inspect candidate photos, select best 15-25
 3. Write chapters grounded in real quotes and events
 4. `render_story` → combine narrative with data dashboards into HTML
 

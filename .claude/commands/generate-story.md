@@ -1,6 +1,6 @@
 Generate an agentic, fact-grounded relationship story visualization for "$ARGUMENTS".
 
-You are a narrative writer with access to OpenMessage MCP tools. Your job is to explore the messaging history with this person, identify pivotal periods, read actual messages from those periods, and write a story grounded entirely in what you read. Then render it as an HTML visualization.
+You are a narrative writer with access to OpenMessage MCP tools. Your job is to explore the messaging history with this person, identify pivotal periods, read actual messages from those periods, and write a story grounded entirely in what you read. Then curate photos and render it as an HTML visualization.
 
 ## Phase 1: overview + pivot identification
 
@@ -41,6 +41,54 @@ These rules are ABSOLUTE and cannot be violated:
 - **Never fabricate dialogue** or combine parts of different messages into one quote
 - **Attribute quotes correctly** — check sender name carefully (watch for "me" vs the other person)
 
+## Phase 3.5: photo curation
+
+If the user provides a photos directory, curate the best photos for the visualization. Photos are interspersed chronologically between sections, so select ones that complement the narrative.
+
+### Finding the photos directory
+
+Ask the user if they have a photos directory. Common locations:
+- WhatsApp export: `~/Downloads/{person}_chat_new/` or similar
+- iMessage: photos may need to be extracted via `download_media`
+- Manual folder the user specifies
+
+### Selection process
+
+1. **List all images** in the directory using `Glob` (pattern: `*.jpg`, `*.jpeg`, `*.png`)
+2. **Visually inspect candidates** using the `Read` tool on image files — Claude Code can see images
+3. **Select 15-25 photos** based on the criteria below
+4. **Note filenames with dates** — WhatsApp photos use `IMG-YYYYMMDD-WA####.jpg` format; these dates are automatically parsed for chronological alignment with chapters
+
+### What makes a GOOD photo (select these)
+
+- **Couple photos**: the two people together — selfies, posed shots, candid moments. HIGHEST PRIORITY.
+- **Meaningful moments**: birthday celebrations, trips, dates, cooking together, holidays
+- **Scenic/travel photos**: beautiful landscapes, landmarks, cityscapes from trips mentioned in messages
+- **Pet photos**: if they have a pet discussed in messages, include 1-2
+- **Food/restaurant photos**: if food is a shared interest, include 1-2 standout ones
+- **Art/illustration**: any custom artwork or illustrations of the couple
+
+### What makes a BAD photo (skip these)
+
+- **Screenshots**: app screenshots, website captures, Twitter/Reddit posts, news articles
+- **Memes/jokes**: funny images, reaction GIFs, internet humor
+- **Product photos**: shopping screenshots, Amazon listings, apartment listings
+- **Documents**: receipts, flight itineraries, forms, PDFs
+- **Low quality**: blurry, very dark, or tiny images
+- **Duplicate/similar**: if 5 photos are from the same event, pick the best 1-2
+
+### Inspection strategy
+
+Don't inspect all 100+ photos individually. Be efficient:
+1. Read a batch of ~10 filenames at a time
+2. Visually inspect the ones with promising names (e.g., dates matching trip periods, not "WA0001" early sequence numbers which tend to be forwarded memes)
+3. Photos from dates that align with chapter periods are especially valuable
+4. Larger file sizes often indicate real camera photos vs. forwarded memes (check with `ls -la`)
+
+### Output
+
+Build a JSON array of the selected photo file paths (absolute paths). You'll pass this to `render_story` via the `photo_paths` parameter.
+
 ## Phase 4: render
 
 Assemble the Story JSON and call `render_story`. The JSON format:
@@ -71,8 +119,11 @@ Call `render_story` with:
 - `story_json`: the JSON string above
 - `output_path`: `/tmp/{name_lowercase}_story.html`
 - `timezone`: "America/New_York" (or ask the user if unsure)
+- `photo_paths`: JSON array of curated photo file paths (from Phase 3.5)
 
-Include any style parameters the user specified (colors, password, photos_dir, etc).
+Photos are automatically sorted chronologically by date in their filename, and interspersed between sections so early photos appear near early chapters and recent photos near recent ones.
+
+Include any style parameters the user specified (colors, password, etc).
 
 ## Phase 5: report
 
@@ -80,6 +131,7 @@ After rendering, report:
 - Output file path and size
 - Number of chapters and date range covered
 - A brief summary of each chapter's theme
+- Number of photos included and how they were selected
 - Remind the user they can open it locally or deploy to Vercel
 
 ## Writing style guidelines

@@ -22,7 +22,7 @@ func buildTemplate() (*template.Template, error) {
 		"noescapeJS":  func(s string) template.JS { return template.JS(s) },
 		"noescapeCSS": func(s string) template.CSS { return template.CSS(s) },
 		"safeURL":     func(s string) template.URL { return template.URL(s) },
-		"asPhotos":    func(d any) []string { return d.([]string) },
+		"asPhotos":    func(d any) []Photo { return d.([]Photo) },
 		"seq24":       func() []int { return makeSeq(24) },
 		"seq7":        func() []int { return makeSeq(7) },
 		"mul":         func(a, b int) int { return a * b },
@@ -1022,13 +1022,13 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
 
 {{else if eq $sec.Type "photos"}}
 <!-- ==================== PHOTOS ==================== -->
-{{if $.Config.PhotoPaths}}
+{{if $.Config.Photos}}
 <section class="section reveal" id="section-photos">
     <div class="container">
         <h2>Moments</h2>
         <div class="photo-grid" style="margin-top: 2rem;">
-            {{range $.Config.PhotoPaths}}
-            <img src="{{. | safeURL}}" alt="Photo" loading="lazy">
+            {{range $.Config.Photos}}
+            <img src="{{.DataURI | safeURL}}" alt="Photo" loading="lazy">
             {{end}}
         </div>
     </div>
@@ -1041,15 +1041,15 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
 <div class="photo-break reveal">
     {{if eq (len $photos) 1}}
     <div class="photo-break-single">
-        <img src="{{index $photos 0 | safeURL}}" alt="" loading="lazy">
+        <img src="{{(index $photos 0).DataURI | safeURL}}" alt="" loading="lazy">
     </div>
     {{else if eq (len $photos) 2}}
     <div class="photo-break-pair">
-        {{range $photos}}<img src="{{. | safeURL}}" alt="" loading="lazy">{{end}}
+        {{range $photos}}<img src="{{.DataURI | safeURL}}" alt="" loading="lazy">{{end}}
     </div>
     {{else}}
     <div class="photo-break-trio">
-        {{range $photos}}<img src="{{. | safeURL}}" alt="" loading="lazy">{{end}}
+        {{range $photos}}<img src="{{.DataURI | safeURL}}" alt="" loading="lazy">{{end}}
     </div>
     {{end}}
 </div>

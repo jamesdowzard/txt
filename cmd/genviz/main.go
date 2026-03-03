@@ -128,14 +128,14 @@ func main() {
 	}
 
 	// Encode photos if directory provided
-	var photoDataURIs []string
+	var photos []viz.Photo
 	if *photosDir != "" {
 		var err error
-		photoDataURIs, err = viz.EncodePhotosFromDir(*photosDir, *maxPhotos)
+		photos, err = viz.EncodePhotosFromDir(*photosDir, *maxPhotos)
 		if err != nil {
 			log.Fatalf("encode photos: %v", err)
 		}
-		fmt.Printf("Encoded %d photos\n", len(photoDataURIs))
+		fmt.Printf("Encoded %d photos\n", len(photos))
 	}
 
 	// Build config
@@ -148,7 +148,7 @@ func main() {
 		BackgroundColor: *bg,
 		Timezone:        *timezone,
 		PasswordHash:    *password,
-		PhotoPaths:      photoDataURIs,
+		Photos:          photos,
 	}
 
 	// Render

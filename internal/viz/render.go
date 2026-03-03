@@ -136,8 +136,8 @@ func buildTemplateData(stats *story.Stats, st *story.Story, config VizConfig) te
 	}
 
 	// Distribute photos as editorial breaks between content sections
-	if len(config.PhotoPaths) > 0 {
-		sections = distributePhotos(sections, config.PhotoPaths)
+	if len(config.Photos) > 0 {
+		sections = distributePhotos(sections, config.Photos)
 	}
 
 	// Pre-serialize chart data as JSON for Chart.js
@@ -247,8 +247,12 @@ func buildHeatmapData(stats *story.Stats) []heatmapCell {
 }
 
 // distributePhotos inserts photo-break sections between content sections,
-// creating an editorial magazine-style layout instead of a single gallery.
-func distributePhotos(sections []section, photos []string) []section {
+// creating an editorial magazine-style layout. Photos are sorted chronologically
+// so early photos appear near early sections and late photos near late sections.
+func distributePhotos(sections []section, photos []Photo) []section {
+	// Sort photos chronologically (undated go to end)
+	SortPhotosByDate(photos)
+
 	// Find insertion points: after chapters, data sections (not hero, closing, timeline-nav)
 	var insertPoints []int
 	for i, sec := range sections {
@@ -263,6 +267,8 @@ func distributePhotos(sections []section, photos []string) []section {
 
 	// Distribute photos into groups for each insertion point.
 	// Each group gets 1-3 photos, alternating sizes for visual variety.
+	// Since photos are chronologically sorted, early photos naturally
+	// land near early sections and late photos near late sections.
 	n := len(insertPoints)
 	perBreak := len(photos) / n
 	if perBreak < 1 {
@@ -272,7 +278,7 @@ func distributePhotos(sections []section, photos []string) []section {
 		perBreak = 3
 	}
 
-	groups := make([][]string, n)
+	groups := make([][]Photo, n)
 	idx := 0
 	for i := 0; i < n && idx < len(photos); i++ {
 		size := perBreak

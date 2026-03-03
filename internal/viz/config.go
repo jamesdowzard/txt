@@ -24,8 +24,8 @@ type VizConfig struct {
 	// Custom narrative content
 	Interludes []Interlude // poetic breaks between sections
 
-	// Photo gallery
-	PhotoPaths []string // local file paths to included photos
+	// Photo gallery (interspersed between sections chronologically)
+	Photos []Photo
 }
 
 // Interlude is a poetic break between data sections.

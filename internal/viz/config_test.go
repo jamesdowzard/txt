@@ -55,7 +55,7 @@ func TestVizConfigDefaults(t *testing.T) {
 	if cfg.Interludes != nil {
 		t.Errorf("zero-value Interludes = %v, want nil", cfg.Interludes)
 	}
-	if cfg.PhotoPaths != nil {
-		t.Errorf("zero-value PhotoPaths = %v, want nil", cfg.PhotoPaths)
+	if cfg.Photos != nil {
+		t.Errorf("zero-value Photos = %v, want nil", cfg.Photos)
 	}
 }
