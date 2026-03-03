@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
@@ -40,8 +41,8 @@ func RunServe(logger zerolog.Logger) error {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
 
-	// Sync WhatsApp and iMessage on startup (incremental, background)
-	go func() {
+	// Sync WhatsApp and iMessage periodically (every 30s, incremental)
+	syncLocalPlatforms := func() {
 		wa := &importer.WhatsAppNative{MyName: "Max"}
 		if result, err := wa.ImportFromDB(a.Store); err != nil {
 			logger.Warn().Err(err).Msg("WhatsApp sync failed")
@@ -60,6 +61,16 @@ func RunServe(logger zerolog.Logger) error {
 				Int("messages", result.MessagesImported).
 				Int("conversations", result.ConversationsCreated).
 				Msg("iMessage sync complete")
+		}
+	}
+
+	// Run once immediately, then every 30 seconds
+	go func() {
+		syncLocalPlatforms()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			syncLocalPlatforms()
 		}
 	}()
 
