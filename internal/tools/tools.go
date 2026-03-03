@@ -27,6 +27,8 @@ func Register(s *server.MCPServer, a *app.App) {
 	s.AddTool(personStatsTool(), personStatsHandler(a))
 	s.AddTool(generatePersonStoryTool(), generatePersonStoryHandler(a))
 	s.AddTool(generateVizTool(), generateVizHandler(a))
+	s.AddTool(getPersonMessagesRangeTool(), getPersonMessagesRangeHandler(a))
+	s.AddTool(renderStoryTool(), renderStoryHandler(a))
 }
 
 func strArg(args map[string]any, key string) string {

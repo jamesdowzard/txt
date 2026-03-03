@@ -315,10 +315,95 @@ func generatePersonStoryHandler(a *app.App) server.ToolHandlerFunc {
 	}
 }
 
-// collectPersonMessages finds all 1:1 conversations matching the name, loads
-// all messages, deduplicates cross-platform duplicates, and returns them sorted
-// chronologically. Also returns conversation display names for context.
-func collectPersonMessages(a *app.App, name string) ([]*db.Message, []string, error) {
+// --- Date-range filtered person messages (for agentic story generation) ---
+
+func getPersonMessagesRangeTool() mcp.Tool {
+	return mcp.NewTool("get_person_messages_range",
+		mcp.WithDescription("Get messages with a person within a date range across all platforms. Returns chronological messages formatted as '[YYYY-MM-DD HH:MM] sender: body'. Useful for deep-diving into specific periods of a relationship."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("Person's name to search for (case-insensitive partial match)")),
+		mcp.WithString("after", mcp.Required(), mcp.Description("Start date (ISO-8601, e.g. '2024-01-01')")),
+		mcp.WithString("before", mcp.Required(), mcp.Description("End date (ISO-8601, e.g. '2024-03-31')")),
+		mcp.WithNumber("limit", mcp.Description("Max messages to return (default 500)")),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+	)
+}
+
+func getPersonMessagesRangeHandler(a *app.App) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+		name := strArg(args, "name")
+		if name == "" {
+			return errorResult("name is required"), nil
+		}
+		afterStr := strArg(args, "after")
+		if afterStr == "" {
+			return errorResult("after is required"), nil
+		}
+		beforeStr := strArg(args, "before")
+		if beforeStr == "" {
+			return errorResult("before is required"), nil
+		}
+		limit := intArg(args, "limit", 500)
+
+		afterTime, err := time.Parse("2006-01-02", afterStr)
+		if err != nil {
+			return errorResult(fmt.Sprintf("invalid 'after' date %q: %v", afterStr, err)), nil
+		}
+		beforeTime, err := time.Parse("2006-01-02", beforeStr)
+		if err != nil {
+			return errorResult(fmt.Sprintf("invalid 'before' date %q: %v", beforeStr, err)), nil
+		}
+		// Include the full end date
+		beforeTime = beforeTime.Add(24*time.Hour - time.Millisecond)
+
+		afterMS := afterTime.UnixMilli()
+		beforeMS := beforeTime.UnixMilli()
+
+		// Find matching conversation IDs (reuse collectPersonMessages logic)
+		convIDs, convNames, err := findPersonConversations(a, name)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		if len(convIDs) == 0 {
+			return textResult(fmt.Sprintf("No conversations found with '%s'.", name)), nil
+		}
+
+		msgs, err := a.Store.GetMessagesByConversationsRange(convIDs, afterMS, beforeMS, limit)
+		if err != nil {
+			return errorResult(fmt.Sprintf("get messages: %v", err)), nil
+		}
+
+		deduped := deduplicateMessages(msgs)
+
+		if len(deduped) == 0 {
+			return textResult(fmt.Sprintf("No messages with '%s' between %s and %s.", name, afterStr, beforeStr)), nil
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Messages with '%s' from %s to %s (%d messages from %d conversation(s): %s)\n\n",
+			name, afterStr, beforeStr, len(deduped), len(convNames), strings.Join(convNames, ", "))
+		sb.WriteString(messagePreamble)
+
+		for _, m := range deduped {
+			ts := time.UnixMilli(m.TimestampMS).UTC().Format("2006-01-02 15:04")
+			sender := m.SenderName
+			if m.IsFromMe {
+				sender = "me"
+			} else if sender == "" {
+				sender = m.SenderNumber
+			}
+			body := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
+			fmt.Fprintf(&sb, "[%s] %s: %s\n", ts, sender, body)
+		}
+
+		return textResult(sb.String()), nil
+	}
+}
+
+// findPersonConversations returns matching conversation IDs and display names
+// for a person. Extracted from collectPersonMessages for reuse.
+func findPersonConversations(a *app.App, name string) ([]string, []string, error) {
 	allConvs, err := a.Store.ListConversations(1000)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list conversations: %v", err)
@@ -328,7 +413,6 @@ func collectPersonMessages(a *app.App, name string) ([]*db.Message, []string, er
 	var matchingConvIDs []string
 	var convNames []string
 	for _, c := range allConvs {
-		// Skip group chats — we want 1:1 conversations with this person
 		if c.IsGroup {
 			continue
 		}
@@ -342,7 +426,17 @@ func collectPersonMessages(a *app.App, name string) ([]*db.Message, []string, er
 			convNames = append(convNames, fmt.Sprintf("%s [%s]", c.Name, platform))
 		}
 	}
+	return matchingConvIDs, convNames, nil
+}
 
+// collectPersonMessages finds all 1:1 conversations matching the name, loads
+// all messages, deduplicates cross-platform duplicates, and returns them sorted
+// chronologically. Also returns conversation display names for context.
+func collectPersonMessages(a *app.App, name string) ([]*db.Message, []string, error) {
+	matchingConvIDs, convNames, err := findPersonConversations(a, name)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(matchingConvIDs) == 0 {
 		return nil, nil, nil
 	}
@@ -352,10 +446,7 @@ func collectPersonMessages(a *app.App, name string) ([]*db.Message, []string, er
 		return nil, nil, fmt.Errorf("get messages: %v", err)
 	}
 
-	// Deduplicate: messages with identical body + timestamp within 2 seconds
-	// are likely the same message on different platforms (SMS + iMessage).
 	deduped := deduplicateMessages(msgs)
-
 	return deduped, convNames, nil
 }
 

@@ -12,7 +12,7 @@ Local-first universal message database with built-in MCP server. Ingests message
 │   ├── db/           SQLite store (conversations, messages, contacts, unified_contacts, drafts)
 │   ├── importer/     Multi-platform import adapters (gchat, imessage, whatsapp)
 │   ├── story/        Stats computation + narrative story generation
-│   ├── tools/        MCP tools (16 tools)
+│   ├── tools/        MCP tools (18 tools)
 │   ├── viz/          Relationship visualization renderer (self-contained HTML)
 │   └── web/          HTTP API + embedded React UI
 ├── macos/            Swift macOS app wrapper
@@ -33,16 +33,18 @@ openmessage import whatsapp /path/to/chat.txt --name "Your Name"
 
 ### MCP tools
 
-16 tools registered:
+18 tools registered:
 - `get_messages`, `get_conversation`, `search_messages` — cross-platform by default
 - `list_conversations` — optional `source_platform` filter (sms, gchat, imessage, whatsapp)
 - `get_person_messages` — all messages with a person across all platforms
+- `get_person_messages_range` — date-filtered version of get_person_messages (for deep-diving into specific periods)
 - `import_messages` — import from any supported source
 - `conversation_stats` — volume, heatmap, phrases, response times, gaps (single conversation)
 - `generate_story` — narrative chapters with optional Claude API enhancement (single conversation)
 - `person_stats` — cross-platform stats for all 1:1 messages with a person (merges + deduplicates)
 - `generate_person_story` — cross-platform narrative story for a person (merges + deduplicates)
 - `generate_viz` — self-contained HTML visualization combining data dashboards + narrative (see below)
+- `render_story` — render a pre-built Story JSON into HTML viz (used by agentic story generation)
 - `send_message`, `draft_message`, `download_media`, `list_contacts`, `get_status`
 
 ### HTTP API
@@ -119,6 +121,23 @@ Generates a self-contained HTML file combining data dashboards with narrative ch
 **Stats engine extensions** (`internal/story/stats.go`):
 - `PhraseCount.BySender` — per-sender phrase counts for colored word cloud
 - `ComputeStats(messages, tz)` — timezone parameter for TZ-shifted heatmap
+
+## Agentic story generation (`/generate-story`)
+
+Claude Code slash command that produces fact-grounded relationship visualizations. Instead of a single-pass API call that halluculates, the agent explores conversations agentically:
+
+1. `person_stats` → identify 4-8 pivotal periods from volume patterns
+2. `get_person_messages_range` → deep-dive into each period's actual messages
+3. Write chapters grounded in real quotes and events
+4. `render_story` → combine narrative with data dashboards into HTML
+
+**Usage:** `/generate-story Jenn` from Claude Code in this project.
+
+**Key tools:**
+- `get_person_messages_range` — date-filtered cross-platform messages for deep-dives
+- `render_story` — accepts pre-built Story JSON + person name, computes stats, renders HTML
+
+**Command file:** `.claude/commands/generate-story.md`
 
 ## Key files
 

@@ -150,6 +150,44 @@ func (s *Store) GetMessagesByConversations(conversationIDs []string, limit int) 
 	return scanMessages(rows)
 }
 
+// GetMessagesByConversationsRange returns messages from multiple conversations
+// within a time range, ordered by timestamp ascending.
+func (s *Store) GetMessagesByConversationsRange(conversationIDs []string, afterMS, beforeMS int64, limit int) ([]*Message, error) {
+	if len(conversationIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(conversationIDs))
+	args := make([]any, len(conversationIDs))
+	for i, id := range conversationIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	conditions := "conversation_id IN (" + strings.Join(placeholders, ",") + ")"
+	if afterMS > 0 {
+		conditions += " AND timestamp_ms >= ?"
+		args = append(args, afterMS)
+	}
+	if beforeMS > 0 {
+		conditions += " AND timestamp_ms <= ?"
+		args = append(args, beforeMS)
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.Query(`
+		SELECT `+messageColumns+`
+		FROM messages
+		WHERE `+conditions+`
+		ORDER BY timestamp_ms ASC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
 // DeleteTmpMessages removes locally-created tmp_ messages for a conversation.
 // Called when the server echo arrives with a real message ID.
 func (s *Store) DeleteTmpMessages(conversationID string) (int64, error) {
