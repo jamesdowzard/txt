@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,7 +115,7 @@ func generateVizHandler(a *app.App) server.ToolHandlerFunc {
 			AccentColor:     strArg(args, "accent_color"),
 			BackgroundColor: strArg(args, "background_color"),
 			Timezone:        tzName,
-			PasswordHash:    strArg(args, "password"), // raw password — template does SHA-256 client-side
+			PasswordHash:    hashPassword(strArg(args, "password")),
 		}
 
 		// Render HTML
@@ -166,6 +168,15 @@ func generateVizHandler(a *app.App) server.ToolHandlerFunc {
 
 		return textResult(summary), nil
 	}
+}
+
+// hashPassword returns the SHA-256 hex digest of a password, or empty if password is empty.
+func hashPassword(pw string) string {
+	if pw == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(pw))
+	return hex.EncodeToString(h[:])
 }
 
 func joinNames(names []string) string {

@@ -108,7 +108,7 @@ func renderStoryHandler(a *app.App) server.ToolHandlerFunc {
 			AccentColor:     strArg(args, "accent_color"),
 			BackgroundColor: strArg(args, "background_color"),
 			Timezone:        tzName,
-			PasswordHash:    strArg(args, "password"),
+			PasswordHash:    hashPassword(strArg(args, "password")),
 		}
 
 		// Encode photos: photo_paths (curated list) takes priority over photos_dir
