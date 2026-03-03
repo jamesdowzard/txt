@@ -22,6 +22,7 @@ func buildTemplate() (*template.Template, error) {
 		"noescapeJS":  func(s string) template.JS { return template.JS(s) },
 		"noescapeCSS": func(s string) template.CSS { return template.CSS(s) },
 		"safeURL":     func(s string) template.URL { return template.URL(s) },
+		"asPhotos":    func(d any) []string { return d.([]string) },
 		"seq24":       func() []int { return makeSeq(24) },
 		"seq7":        func() []int { return makeSeq(7) },
 		"mul":         func(a, b int) int { return a * b },
@@ -691,7 +692,7 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
     line-height: 1.8;
 }
 
-/* ============ Photos ============ */
+/* ============ Photos (legacy grid) ============ */
 .photo-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -708,6 +709,79 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
 
 .photo-grid img:hover {
     transform: scale(1.05);
+}
+
+/* ============ Photo Breaks (interspersed) ============ */
+.photo-break {
+    padding: 2rem var(--gutter);
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.photo-break img {
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                filter 0.4s;
+    filter: saturate(0.9);
+}
+
+.photo-break img:hover {
+    transform: scale(1.02);
+    filter: saturate(1.1);
+}
+
+.photo-break-single {
+    text-align: center;
+}
+
+.photo-break-single img {
+    width: 100%;
+    max-height: 500px;
+    object-fit: cover;
+    border-radius: 12px;
+}
+
+.photo-break-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.photo-break-pair img {
+    width: 100%;
+    aspect-ratio: 3/4;
+    object-fit: cover;
+    border-radius: 10px;
+}
+
+.photo-break-trio {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.photo-break-trio img {
+    width: 100%;
+    object-fit: cover;
+    border-radius: 10px;
+}
+
+.photo-break-trio img:first-child {
+    grid-row: 1 / -1;
+    height: 100%;
+}
+
+@media (max-width: 640px) {
+    .photo-break-pair {
+        grid-template-columns: 1fr;
+    }
+    .photo-break-trio {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }
+    .photo-break-trio img:first-child {
+        grid-row: auto;
+    }
 }
 
 /* ============ Closing ============ */
@@ -960,6 +1034,25 @@ h3 { font-size: clamp(1.3rem, 2.5vw, 1.8rem); line-height: 1.3; }
     </div>
 </section>
 {{end}}
+
+{{else if eq $sec.Type "photo-break"}}
+<!-- ==================== PHOTO BREAK ==================== -->
+{{$photos := asPhotos $sec.Data}}
+<div class="photo-break reveal">
+    {{if eq (len $photos) 1}}
+    <div class="photo-break-single">
+        <img src="{{index $photos 0 | safeURL}}" alt="" loading="lazy">
+    </div>
+    {{else if eq (len $photos) 2}}
+    <div class="photo-break-pair">
+        {{range $photos}}<img src="{{. | safeURL}}" alt="" loading="lazy">{{end}}
+    </div>
+    {{else}}
+    <div class="photo-break-trio">
+        {{range $photos}}<img src="{{. | safeURL}}" alt="" loading="lazy">{{end}}
+    </div>
+    {{end}}
+</div>
 
 {{else if eq $sec.Type "closing"}}
 <!-- ==================== CLOSING ==================== -->

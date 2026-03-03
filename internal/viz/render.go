@@ -29,8 +29,8 @@ type templateData struct {
 
 // section represents a renderable section of the visualization.
 type section struct {
-	Type string // "hero", "chapter", "volume-chart", "sender-split", "heatmap", "phrases", "silence", "photos", "closing", "interlude", "timeline-nav"
-	Data any    // chapter data, interlude text, etc.
+	Type string // "hero", "chapter", "volume-chart", "sender-split", "heatmap", "phrases", "silence", "photos", "photo-break", "closing", "interlude", "timeline-nav"
+	Data any    // chapter data, interlude text, photo URIs ([]string), etc.
 }
 
 // heatmapCell is a pre-computed cell for the heatmap grid.
@@ -133,6 +133,11 @@ func buildTemplateData(stats *story.Stats, st *story.Story, config VizConfig) te
 			sections = append(sections, section{Type: "chapter", Data: st.Chapters[chapterIdx]})
 			chapterIdx++
 		}
+	}
+
+	// Distribute photos as editorial breaks between content sections
+	if len(config.PhotoPaths) > 0 {
+		sections = distributePhotos(sections, config.PhotoPaths)
 	}
 
 	// Pre-serialize chart data as JSON for Chart.js
@@ -239,4 +244,65 @@ func buildHeatmapData(stats *story.Stats) []heatmapCell {
 		}
 	}
 	return cells
+}
+
+// distributePhotos inserts photo-break sections between content sections,
+// creating an editorial magazine-style layout instead of a single gallery.
+func distributePhotos(sections []section, photos []string) []section {
+	// Find insertion points: after chapters, data sections (not hero, closing, timeline-nav)
+	var insertPoints []int
+	for i, sec := range sections {
+		switch sec.Type {
+		case "chapter", "volume-chart", "sender-split", "heatmap", "phrases", "silence":
+			insertPoints = append(insertPoints, i)
+		}
+	}
+	if len(insertPoints) == 0 {
+		return sections
+	}
+
+	// Distribute photos into groups for each insertion point.
+	// Each group gets 1-3 photos, alternating sizes for visual variety.
+	n := len(insertPoints)
+	perBreak := len(photos) / n
+	if perBreak < 1 {
+		perBreak = 1
+	}
+	if perBreak > 3 {
+		perBreak = 3
+	}
+
+	groups := make([][]string, n)
+	idx := 0
+	for i := 0; i < n && idx < len(photos); i++ {
+		size := perBreak
+		// Alternate: odd-indexed breaks get one fewer photo for visual rhythm
+		if perBreak > 1 && i%2 == 1 {
+			size = perBreak - 1
+		}
+		end := idx + size
+		if end > len(photos) {
+			end = len(photos)
+		}
+		groups[i] = photos[idx:end]
+		idx = end
+	}
+
+	// Build insertion map: section index -> group index
+	insertMap := make(map[int]int)
+	for gi, si := range insertPoints {
+		if gi < len(groups) && len(groups[gi]) > 0 {
+			insertMap[si] = gi
+		}
+	}
+
+	// Rebuild sections with photo breaks inserted after content sections
+	var result []section
+	for i, sec := range sections {
+		result = append(result, sec)
+		if gi, ok := insertMap[i]; ok {
+			result = append(result, section{Type: "photo-break", Data: groups[gi]})
+		}
+	}
+	return result
 }

@@ -35,6 +35,8 @@ type Interlude struct {
 }
 
 // DefaultSections returns the default section ordering.
+// Photos are no longer a single section — they are automatically
+// interspersed between content sections via distributePhotos().
 func DefaultSections() []string {
 	return []string{
 		"password-gate",
@@ -48,7 +50,6 @@ func DefaultSections() []string {
 		"chapter-late",
 		"phrases",
 		"silence",
-		"photos",
 		"closing",
 	}
 }

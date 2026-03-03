@@ -18,11 +18,13 @@ func TestDefaultSections(t *testing.T) {
 	}
 
 	// Verify all expected sections are present.
+	// Note: "photos" is no longer in defaults — photos are distributed
+	// as photo-break sections between content sections at render time.
 	expected := []string{
 		"password-gate", "hero", "timeline-nav",
 		"chapter-early", "volume-chart", "chapter-middle",
 		"sender-split", "heatmap", "chapter-late",
-		"phrases", "silence", "photos", "closing",
+		"phrases", "silence", "closing",
 	}
 	if len(sections) != len(expected) {
 		t.Fatalf("got %d sections, want %d", len(sections), len(expected))
