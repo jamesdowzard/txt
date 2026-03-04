@@ -146,6 +146,10 @@ func buildTemplateData(stats *story.Stats, st *story.Story, config VizConfig) te
 	series1JSON, _ := json.Marshal(series1)
 	series2JSON, _ := json.Marshal(series2)
 
+	// Replace "me" with Person1 name in stats and story so labels/colors match
+	renameMeSender(stats, config.Person1)
+	renameStoryMeSender(st, config.Person1)
+
 	senderLabels, senderValues := buildSenderSplitData(stats)
 	senderLabelsJSON, _ := json.Marshal(senderLabels)
 	senderValuesJSON, _ := json.Marshal(senderValues)
@@ -311,4 +315,41 @@ func distributePhotos(sections []section, photos []Photo) []section {
 		}
 	}
 	return result
+}
+
+// renameMeSender replaces the "me" key with person1's name in all stats maps
+// and story quotes so that chart labels, quote bubbles, and template color
+// comparisons use the display name.
+func renameMeSender(stats *story.Stats, person1 string) {
+	if person1 == "" || person1 == "me" {
+		return
+	}
+	renameKey := func(m map[string]int) {
+		if v, ok := m["me"]; ok {
+			delete(m, "me")
+			m[person1] = v
+		}
+	}
+	renameKey(stats.SenderSplit)
+	renameKey(stats.AvgResponseTimes)
+	for i := range stats.Yearly {
+		renameKey(stats.Yearly[i].BySender)
+	}
+	for i := range stats.TopPhrases {
+		renameKey(stats.TopPhrases[i].BySender)
+	}
+}
+
+// renameStoryMeSender replaces "me" sender in story quotes with person1's name.
+func renameStoryMeSender(st *story.Story, person1 string) {
+	if st == nil || person1 == "" || person1 == "me" {
+		return
+	}
+	for i := range st.Chapters {
+		for j := range st.Chapters[i].Quotes {
+			if st.Chapters[i].Quotes[j].Sender == "me" {
+				st.Chapters[i].Quotes[j].Sender = person1
+			}
+		}
+	}
 }
