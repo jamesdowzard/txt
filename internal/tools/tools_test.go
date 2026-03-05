@@ -444,6 +444,111 @@ func TestDownloadMediaMissingID(t *testing.T) {
 	}
 }
 
+func TestSendGroupMessageNotConnected(t *testing.T) {
+	a := testApp(t)
+
+	handler := sendGroupMessageHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"phone_numbers": `["+15551234567", "+15559876543"]`,
+		"message":       "Hello group",
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error when not connected")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !contains(text, "not connected") {
+		t.Errorf("expected 'not connected' error, got: %s", text)
+	}
+}
+
+func TestSendGroupMessageMissingPhones(t *testing.T) {
+	a := testApp(t)
+
+	handler := sendGroupMessageHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"message": "Hello group",
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error for missing phone_numbers")
+	}
+}
+
+func TestSendGroupMessageMissingMessage(t *testing.T) {
+	a := testApp(t)
+
+	handler := sendGroupMessageHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"phone_numbers": `["+15551234567", "+15559876543"]`,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error for missing message")
+	}
+}
+
+func TestSendGroupMessageInvalidJSON(t *testing.T) {
+	a := testApp(t)
+
+	handler := sendGroupMessageHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"phone_numbers": "not json",
+		"message":       "Hello group",
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error for invalid JSON")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !contains(text, "JSON array") {
+		t.Errorf("expected JSON array error, got: %s", text)
+	}
+}
+
+func TestSendGroupMessageTooFewNumbers(t *testing.T) {
+	a := testApp(t)
+
+	handler := sendGroupMessageHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"phone_numbers": `["+15551234567"]`,
+		"message":       "Hello group",
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error for too few numbers")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !contains(text, "at least 2") {
+		t.Errorf("expected 'at least 2' error, got: %s", text)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
 }

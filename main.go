@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -19,6 +20,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  pair                                      - Pair with your phone via QR code")
 		fmt.Fprintln(os.Stderr, "  serve                                     - Start MCP server (stdio)")
 		fmt.Fprintln(os.Stderr, "  send <conversation_id> <msg>              - Send message to a conversation")
+		fmt.Fprintln(os.Stderr, "  send-group <phone1,phone2,...> <msg>       - Send group message (MMS)")
 		fmt.Fprintln(os.Stderr, "  import gchat <groups-dir> [--email you@]  - Import Google Chat Takeout")
 		fmt.Fprintln(os.Stderr, "  import gchat-conversation <messages.json> - Import single GChat conversation")
 		fmt.Fprintln(os.Stderr, "  import imessage [db-path]                 - Import iMessage (needs Full Disk Access)")
@@ -38,6 +40,13 @@ func main() {
 			os.Exit(1)
 		}
 		err = cmd.RunSend(logger, os.Args[2], os.Args[3])
+	case "send-group":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: openmessage send-group <phone1,phone2,...> <message>")
+			os.Exit(1)
+		}
+		phones := strings.Split(os.Args[2], ",")
+		err = cmd.RunSendGroup(logger, phones, os.Args[3])
 	case "import":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: openmessage import <gchat|gchat-conversation|imessage|whatsapp> [args...]")

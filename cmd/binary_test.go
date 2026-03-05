@@ -60,3 +60,36 @@ func TestBuiltBinaryAcceptsPairCommand(t *testing.T) {
 		t.Errorf("binary panicked:\n%s", output)
 	}
 }
+
+// TestBuiltBinaryRejectsSendGroupNoArgs verifies that running "send-group"
+// with no additional arguments exits non-zero and prints usage information.
+func TestBuiltBinaryRejectsSendGroupNoArgs(t *testing.T) {
+	// Build the binary
+	tmpDir := t.TempDir()
+	binary := filepath.Join(tmpDir, "openmessage")
+	build := exec.Command("go", "build", "-o", binary, "..")
+	build.Dir = filepath.Join(".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	// Run with "send-group" and no args — use a temp data dir so it doesn't touch real data
+	dataDir := filepath.Join(tmpDir, "data")
+	os.MkdirAll(dataDir, 0700)
+
+	cmd := exec.Command(binary, "send-group")
+	cmd.Env = append(os.Environ(), "OPENMESSAGES_DATA_DIR="+dataDir)
+
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	// Should exit with non-zero status
+	if err == nil {
+		t.Fatal("expected non-zero exit code, but command succeeded")
+	}
+
+	// Should contain usage information
+	if !strings.Contains(output, "Usage") && !strings.Contains(output, "send-group") {
+		t.Errorf("expected output to contain 'Usage' or 'send-group', got:\n%s", output)
+	}
+}
