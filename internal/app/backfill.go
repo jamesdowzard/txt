@@ -280,13 +280,7 @@ func (a *App) BackfillConversationByPhone(phone string) error {
 	}
 
 	convResp, err := gm.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
-		Numbers: []*gmproto.ContactNumber{
-			{
-				MysteriousInt: 7,
-				Number:        phone,
-				Number2:       phone,
-			},
-		},
+		Numbers: NewContactNumbers([]string{phone}),
 	})
 	if err != nil {
 		return fmt.Errorf("get or create conversation: %w", err)

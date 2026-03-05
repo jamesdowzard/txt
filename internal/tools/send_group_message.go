@@ -49,17 +49,8 @@ func sendGroupMessageHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("not connected to Google Messages"), nil
 		}
 
-		numbers := make([]*gmproto.ContactNumber, len(phones))
-		for i, phone := range phones {
-			numbers[i] = &gmproto.ContactNumber{
-				MysteriousInt: 7,
-				Number:        phone,
-				Number2:       phone,
-			}
-		}
-
 		convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
-			Numbers: numbers,
+			Numbers: app.NewContactNumbers(phones),
 		})
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to get/create group conversation: %v", err)), nil

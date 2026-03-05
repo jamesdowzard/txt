@@ -38,15 +38,8 @@ func sendMessageHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("not connected to Google Messages"), nil
 		}
 
-		// Get or create conversation for this phone number
 		convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
-			Numbers: []*gmproto.ContactNumber{
-				{
-					MysteriousInt: 7,
-					Number:        phone,
-					Number2:       phone,
-				},
-			},
+			Numbers: app.NewContactNumbers([]string{phone}),
 		})
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to get/create conversation: %v", err)), nil

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,10 +80,10 @@ func TestGetMessagesWithData(t *testing.T) {
 	if text == "No messages found." {
 		t.Error("expected messages, got none")
 	}
-	if !contains(text, "Alice") {
+	if !strings.Contains(text, "Alice") {
 		t.Errorf("expected Alice in output, got: %s", text)
 	}
-	if !contains(text, "Hello!") {
+	if !strings.Contains(text, "Hello!") {
 		t.Errorf("expected Hello! in output, got: %s", text)
 	}
 }
@@ -109,10 +110,10 @@ func TestGetMessagesFilterByPhone(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "From Alice") {
+	if !strings.Contains(text, "From Alice") {
 		t.Errorf("expected 'From Alice', got: %s", text)
 	}
-	if contains(text, "From Bob") {
+	if strings.Contains(text, "From Bob") {
 		t.Errorf("should not contain 'From Bob', got: %s", text)
 	}
 }
@@ -138,7 +139,7 @@ func TestSearchMessages(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "Hello world") {
+	if !strings.Contains(text, "Hello world") {
 		t.Errorf("expected 'Hello world', got: %s", text)
 	}
 
@@ -173,10 +174,10 @@ func TestListConversations(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "Alice") {
+	if !strings.Contains(text, "Alice") {
 		t.Errorf("expected Alice, got: %s", text)
 	}
-	if !contains(text, "[group]") {
+	if !strings.Contains(text, "[group]") {
 		t.Errorf("expected [group], got: %s", text)
 	}
 }
@@ -202,7 +203,7 @@ func TestGetConversation(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "Hi there") {
+	if !strings.Contains(text, "Hi there") {
 		t.Errorf("expected 'Hi there', got: %s", text)
 	}
 
@@ -235,7 +236,7 @@ func TestSendMessageNotConnected(t *testing.T) {
 		t.Error("expected error when not connected")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "not connected") {
+	if !strings.Contains(text, "not connected") {
 		t.Errorf("expected 'not connected' error, got: %s", text)
 	}
 }
@@ -252,7 +253,7 @@ func TestGetStatus(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "not connected") {
+	if !strings.Contains(text, "not connected") {
 		t.Errorf("expected 'not connected', got: %s", text)
 	}
 }
@@ -271,7 +272,7 @@ func TestListContacts(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "Alice") {
+	if !strings.Contains(text, "Alice") {
 		t.Errorf("expected Alice, got: %s", text)
 	}
 }
@@ -285,31 +286,31 @@ func TestFormatMessageBody(t *testing.T) {
 
 	// Voice message with no body text
 	got = formatMessageBody("", "media-123", "audio/ogg", "msg-2")
-	if !contains(got, "voice message") {
+	if !strings.Contains(got, "voice message") {
 		t.Errorf("voice message: expected 'voice message' tag, got: %s", got)
 	}
-	if !contains(got, "msg-2") {
+	if !strings.Contains(got, "msg-2") {
 		t.Errorf("voice message: expected message_id in output, got: %s", got)
 	}
 
 	// Image with caption
 	got = formatMessageBody("Check this out", "media-456", "image/jpeg", "msg-3")
-	if !contains(got, "Check this out") {
+	if !strings.Contains(got, "Check this out") {
 		t.Errorf("image with caption: expected caption, got: %s", got)
 	}
-	if !contains(got, "image") {
+	if !strings.Contains(got, "image") {
 		t.Errorf("image with caption: expected 'image' tag, got: %s", got)
 	}
 
 	// Video
 	got = formatMessageBody("", "media-789", "video/mp4", "msg-4")
-	if !contains(got, "video") {
+	if !strings.Contains(got, "video") {
 		t.Errorf("video: expected 'video' tag, got: %s", got)
 	}
 
 	// Unknown attachment type
 	got = formatMessageBody("", "media-000", "application/pdf", "msg-5")
-	if !contains(got, "attachment") {
+	if !strings.Contains(got, "attachment") {
 		t.Errorf("unknown: expected 'attachment' tag, got: %s", got)
 	}
 }
@@ -341,10 +342,10 @@ func TestGetMessagesMediaIndicator(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "voice message") {
+	if !strings.Contains(text, "voice message") {
 		t.Errorf("expected 'voice message' indicator, got: %s", text)
 	}
-	if !contains(text, "vm-1") {
+	if !strings.Contains(text, "vm-1") {
 		t.Errorf("expected message_id 'vm-1' in output for download_media, got: %s", text)
 	}
 }
@@ -364,7 +365,7 @@ func TestDownloadMediaNoMessage(t *testing.T) {
 		t.Error("expected error for nonexistent message")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "not found") {
+	if !strings.Contains(text, "not found") {
 		t.Errorf("expected 'not found' error, got: %s", text)
 	}
 }
@@ -392,7 +393,7 @@ func TestDownloadMediaNoMediaID(t *testing.T) {
 		t.Error("expected error for message with no media")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "no media") {
+	if !strings.Contains(text, "no media") {
 		t.Errorf("expected 'no media' error, got: %s", text)
 	}
 }
@@ -423,7 +424,7 @@ func TestDownloadMediaNotConnected(t *testing.T) {
 		t.Error("expected error when not connected")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "not connected") {
+	if !strings.Contains(text, "not connected") {
 		t.Errorf("expected 'not connected' error, got: %s", text)
 	}
 }
@@ -462,7 +463,7 @@ func TestSendGroupMessageNotConnected(t *testing.T) {
 		t.Error("expected error when not connected")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "not connected") {
+	if !strings.Contains(text, "not connected") {
 		t.Errorf("expected 'not connected' error, got: %s", text)
 	}
 }
@@ -521,7 +522,7 @@ func TestSendGroupMessageInvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "JSON array") {
+	if !strings.Contains(text, "JSON array") {
 		t.Errorf("expected JSON array error, got: %s", text)
 	}
 }
@@ -544,20 +545,9 @@ func TestSendGroupMessageTooFewNumbers(t *testing.T) {
 		t.Error("expected error for too few numbers")
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !contains(text, "at least 2") {
+	if !strings.Contains(text, "at least 2") {
 		t.Errorf("expected 'at least 2' error, got: %s", text)
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
-}
 
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}

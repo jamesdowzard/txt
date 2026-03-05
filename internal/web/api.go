@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
+	"github.com/maxghenis/openmessage/internal/app"
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
 	"github.com/maxghenis/openmessage/internal/story"
@@ -404,13 +405,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 
 		convResp, err := cli.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
-			Numbers: []*gmproto.ContactNumber{
-				{
-					MysteriousInt: 7,
-					Number:        req.PhoneNumber,
-					Number2:       req.PhoneNumber,
-				},
-			},
+			Numbers: app.NewContactNumbers([]string{req.PhoneNumber}),
 		})
 		if err != nil {
 			httpError(w, "failed to get/create conversation: "+err.Error(), 502)
