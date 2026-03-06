@@ -4,14 +4,12 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
-	"math/rand"
-	"time"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
@@ -129,7 +127,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 		// Fetch conversation to get SIM and participant info
@@ -139,29 +137,9 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 
-		// Find our participant ID and SIM payload
-		var myParticipantID string
-		var simPayload *gmproto.SIMPayload
-		for _, p := range conv.GetParticipants() {
-			if p.GetIsMe() {
-				if id := p.GetID(); id != nil {
-					myParticipantID = id.GetNumber()
-				}
-				simPayload = p.GetSimPayload()
-				break
-			}
-		}
+		myParticipantID, simPayload := app.ExtractSIMAndParticipant(conv)
 
-		// Also try SIM card from conversation itself
-		var convSIMPayload *gmproto.SIMPayload
-		if sc := conv.GetSimCard(); sc != nil {
-			convSIMPayload = sc.GetSIMData().GetSIMPayload()
-		}
-		if simPayload == nil {
-			simPayload = convSIMPayload
-		}
-
-		payload := BuildSendPayload(req.ConversationID, req.Message, req.ReplyToID, myParticipantID, simPayload)
+		payload := app.BuildSendPayload(req.ConversationID, req.Message, req.ReplyToID, myParticipantID, simPayload)
 
 		logger.Info().
 			Str("conv_id", req.ConversationID).
@@ -202,7 +180,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 
@@ -250,24 +228,9 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 
-		var myParticipantID string
-		var simPayload *gmproto.SIMPayload
-		for _, p := range conv.GetParticipants() {
-			if p.GetIsMe() {
-				if id := p.GetID(); id != nil {
-					myParticipantID = id.GetNumber()
-				}
-				simPayload = p.GetSimPayload()
-				break
-			}
-		}
-		if simPayload == nil {
-			if sc := conv.GetSimCard(); sc != nil {
-				simPayload = sc.GetSIMData().GetSIMPayload()
-			}
-		}
+		myParticipantID, simPayload := app.ExtractSIMAndParticipant(conv)
 
-		payload := BuildSendMediaPayload(convID, media, myParticipantID, simPayload)
+		payload := app.BuildSendMediaPayload(convID, media, myParticipantID, simPayload)
 
 		logger.Info().
 			Str("conv_id", convID).
@@ -319,7 +282,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 		// Decode hex decryption key
@@ -358,7 +321,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 
@@ -366,9 +329,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		var sim *gmproto.SIMPayload
 		if req.ConversationID != "" {
 			if conv, err := cli.GM.GetConversation(req.ConversationID); err == nil {
-				if sc := conv.GetSimCard(); sc != nil {
-					sim = sc.GetSIMData().GetSIMPayload()
-				}
+				_, sim = app.ExtractSIMAndParticipant(conv)
 			}
 		}
 
@@ -400,7 +361,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 
@@ -502,7 +463,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if cli == nil {
-			httpError(w, "not connected to Google Messages", 503)
+			httpError(w, app.ErrNotConnected, 503)
 			return
 		}
 
@@ -524,24 +485,9 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 
-		var myParticipantID string
-		var simPayload *gmproto.SIMPayload
-		for _, p := range conv.GetParticipants() {
-			if p.GetIsMe() {
-				if id := p.GetID(); id != nil {
-					myParticipantID = id.GetNumber()
-				}
-				simPayload = p.GetSimPayload()
-				break
-			}
-		}
-		if simPayload == nil {
-			if sc := conv.GetSimCard(); sc != nil {
-				simPayload = sc.GetSIMData().GetSIMPayload()
-			}
-		}
+		myParticipantID, simPayload := app.ExtractSIMAndParticipant(conv)
 
-		payload := BuildSendPayload(draft.ConversationID, req.Body, "", myParticipantID, simPayload)
+		payload := app.BuildSendPayload(draft.ConversationID, req.Body, "", myParticipantID, simPayload)
 
 		logger.Info().
 			Str("conv_id", draft.ConversationID).
@@ -733,57 +679,6 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 	}
 
 	return mux
-}
-
-// BuildSendPayload constructs a SendMessageRequest matching the format used by
-// the mautrix bridge: MessageInfo array (not MessagePayloadContent), TmpID in 3
-// places, SIMPayload, and ParticipantID.
-func BuildSendPayload(conversationID, message, replyToID, participantID string, sim *gmproto.SIMPayload) *gmproto.SendMessageRequest {
-	tmpID := fmt.Sprintf("tmp_%012d", rand.Int63n(1e12))
-	req := &gmproto.SendMessageRequest{
-		ConversationID: conversationID,
-		MessagePayload: &gmproto.MessagePayload{
-			TmpID:                 tmpID,
-			MessagePayloadContent: nil,
-			MessageInfo: []*gmproto.MessageInfo{{
-				Data: &gmproto.MessageInfo_MessageContent{MessageContent: &gmproto.MessageContent{
-					Content: message,
-				}},
-			}},
-			ConversationID: conversationID,
-			ParticipantID:  participantID,
-			TmpID2:         tmpID,
-		},
-		SIMPayload: sim,
-		TmpID:      tmpID,
-	}
-	if replyToID != "" {
-		req.Reply = &gmproto.ReplyPayload{
-			MessageID: replyToID,
-		}
-	}
-	return req
-}
-
-// BuildSendMediaPayload constructs a SendMessageRequest with a MediaContent attachment
-// instead of text. Uses the same MessageInfo array format as BuildSendPayload.
-func BuildSendMediaPayload(conversationID string, media *gmproto.MediaContent, participantID string, sim *gmproto.SIMPayload) *gmproto.SendMessageRequest {
-	tmpID := fmt.Sprintf("tmp_%012d", rand.Int63n(1e12))
-	return &gmproto.SendMessageRequest{
-		ConversationID: conversationID,
-		MessagePayload: &gmproto.MessagePayload{
-			TmpID:                 tmpID,
-			MessagePayloadContent: nil,
-			MessageInfo: []*gmproto.MessageInfo{{
-				Data: &gmproto.MessageInfo_MediaContent{MediaContent: media},
-			}},
-			ConversationID: conversationID,
-			ParticipantID:  participantID,
-			TmpID2:         tmpID,
-		},
-		SIMPayload: sim,
-		TmpID:      tmpID,
-	}
 }
 
 // BuildReactionPayload constructs a SendReactionRequest using gmproto.MakeReactionData

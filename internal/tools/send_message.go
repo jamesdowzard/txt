@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
@@ -35,7 +34,7 @@ func sendMessageHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("message is required"), nil
 		}
 		if a.Client == nil {
-			return errorResult("not connected to Google Messages"), nil
+			return errorResult(app.ErrNotConnected), nil
 		}
 
 		convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
@@ -50,26 +49,8 @@ func sendMessageHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("no conversation returned"), nil
 		}
 
-		tmpID := uuid.NewString()
-		_, err = a.Client.GM.SendMessage(&gmproto.SendMessageRequest{
-			ConversationID: conv.GetConversationID(),
-			TmpID:          tmpID,
-			MessagePayload: &gmproto.MessagePayload{
-				TmpID:          tmpID,
-				TmpID2:         tmpID,
-				ConversationID: conv.GetConversationID(),
-				ParticipantID:  conv.GetDefaultOutgoingID(),
-				MessageInfo: []*gmproto.MessageInfo{
-					{
-						Data: &gmproto.MessageInfo_MessageContent{
-							MessageContent: &gmproto.MessageContent{
-								Content: message,
-							},
-						},
-					},
-				},
-			},
-		})
+		payload := app.BuildSendPayload(conv.GetConversationID(), message, "", "", nil)
+		_, err = a.Client.GM.SendMessage(payload)
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to send: %v", err)), nil
 		}

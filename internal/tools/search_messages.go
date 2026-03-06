@@ -51,18 +51,12 @@ func searchMessagesHandler(a *app.App) server.ToolHandlerFunc {
 			if m.IsFromMe {
 				direction = "→"
 			}
-			sender := m.SenderName
-			if sender == "" {
-				sender = m.SenderNumber
-			}
-			if sender == "" {
-				sender = "Unknown"
-			}
-			display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
+			sender := resolveSender(m)
 			platform := ""
 			if m.SourcePlatform != "" && m.SourcePlatform != "sms" {
 				platform = fmt.Sprintf(" [%s]", m.SourcePlatform)
 			}
+			display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
 			fmt.Fprintf(&sb, "[%s] %s %s%s (conv: %s): «%s»\n", ts, direction, sender, platform, m.ConversationID, display)
 		}
 		return textResult(sb.String()), nil

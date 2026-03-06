@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -50,63 +49,50 @@ func getPersonMessagesHandler(a *app.App) server.ToolHandlerFunc {
 			return textResult(fmt.Sprintf("No conversations found with '%s'.", name)), nil
 		}
 
-		// Collect messages from matching conversations
+		// Build a map of conversation metadata for display
+		convMap := make(map[string]*struct{ name, platform string })
+		for _, c := range allConvs {
+			for _, id := range matchingConvIDs {
+				if c.ConversationID == id {
+					platform := c.SourcePlatform
+					if platform == "" {
+						platform = "sms"
+					}
+					convMap[id] = &struct{ name, platform string }{c.Name, platform}
+				}
+			}
+		}
+
+		// Batch fetch all messages in one query
+		msgs, err := a.Store.GetMessagesByConversations(matchingConvIDs, limit)
+		if err != nil {
+			return errorResult(fmt.Sprintf("get messages: %v", err)), nil
+		}
+
+		// Group messages by conversation for display
 		var sb strings.Builder
 		sb.WriteString(messagePreamble)
 		fmt.Fprintf(&sb, "Messages with '%s' across %d conversation(s):\n\n", name, len(matchingConvIDs))
 
+		currentConv := ""
 		totalMsgs := 0
-		perConvLimit := limit / len(matchingConvIDs)
-		if perConvLimit < 10 {
-			perConvLimit = 10
+		for _, m := range msgs {
+			if m.ConversationID != currentConv {
+				if currentConv != "" {
+					sb.WriteString("\n")
+				}
+				currentConv = m.ConversationID
+				if info, ok := convMap[currentConv]; ok {
+					fmt.Fprintf(&sb, "--- %s [%s] (ID: %s) ---\n", info.name, info.platform, currentConv)
+				}
+			}
+
+			sb.WriteString(formatMessageLine(m))
+			sb.WriteByte('\n')
+			totalMsgs++
 		}
 
-		for _, convID := range matchingConvIDs {
-			conv, _ := a.Store.GetConversation(convID)
-			if conv == nil {
-				continue
-			}
-
-			msgs, err := a.Store.GetMessagesByConversation(convID, perConvLimit)
-			if err != nil {
-				continue
-			}
-
-			if len(msgs) == 0 {
-				continue
-			}
-
-			platform := conv.SourcePlatform
-			if platform == "" {
-				platform = "sms"
-			}
-			fmt.Fprintf(&sb, "--- %s [%s] (ID: %s) ---\n", conv.Name, platform, convID)
-
-			for _, m := range msgs {
-				ts := time.UnixMilli(m.TimestampMS).Format(time.RFC3339)
-				direction := "←"
-				if m.IsFromMe {
-					direction = "→"
-				}
-				sender := m.SenderName
-				if sender == "" {
-					sender = m.SenderNumber
-				}
-				if sender == "" {
-					sender = "Unknown"
-				}
-				display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
-				fmt.Fprintf(&sb, "[%s] %s %s: «%s»\n", ts, direction, sender, display)
-				totalMsgs++
-			}
-			sb.WriteString("\n")
-
-			if totalMsgs >= limit {
-				break
-			}
-		}
-
-		fmt.Fprintf(&sb, "Total: %d messages across %d conversation(s)\n", totalMsgs, len(matchingConvIDs))
+		fmt.Fprintf(&sb, "\nTotal: %d messages across %d conversation(s)\n", totalMsgs, len(matchingConvIDs))
 		return textResult(sb.String()), nil
 	}
 }

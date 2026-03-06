@@ -3,9 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
-	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
 	"github.com/maxghenis/openmessage/internal/app"
 )
@@ -30,25 +28,8 @@ func RunSend(logger zerolog.Logger, conversationID, message string) error {
 		return fmt.Errorf("conversation %s not found", conversationID)
 	}
 
-	tmpID := uuid.NewString()
-	_, err = a.Client.GM.SendMessage(&gmproto.SendMessageRequest{
-		ConversationID: conversationID,
-		TmpID:          tmpID,
-		MessagePayload: &gmproto.MessagePayload{
-			TmpID:          tmpID,
-			TmpID2:         tmpID,
-			ConversationID: conversationID,
-			MessageInfo: []*gmproto.MessageInfo{
-				{
-					Data: &gmproto.MessageInfo_MessageContent{
-						MessageContent: &gmproto.MessageContent{
-							Content: message,
-						},
-					},
-				},
-			},
-		},
-	})
+	payload := app.BuildSendPayload(conversationID, message, "", "", nil)
+	_, err = a.Client.GM.SendMessage(payload)
 	if err != nil {
 		return fmt.Errorf("send: %w", err)
 	}

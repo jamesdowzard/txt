@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
@@ -34,26 +33,8 @@ func RunSendGroup(logger zerolog.Logger, phones []string, message string) error 
 		return fmt.Errorf("no conversation returned")
 	}
 
-	tmpID := uuid.NewString()
-	_, err = a.Client.GM.SendMessage(&gmproto.SendMessageRequest{
-		ConversationID: conv.GetConversationID(),
-		TmpID:          tmpID,
-		MessagePayload: &gmproto.MessagePayload{
-			TmpID:          tmpID,
-			TmpID2:         tmpID,
-			ConversationID: conv.GetConversationID(),
-			ParticipantID:  conv.GetDefaultOutgoingID(),
-			MessageInfo: []*gmproto.MessageInfo{
-				{
-					Data: &gmproto.MessageInfo_MessageContent{
-						MessageContent: &gmproto.MessageContent{
-							Content: message,
-						},
-					},
-				},
-			},
-		},
-	})
+	payload := app.BuildSendPayload(conv.GetConversationID(), message, "", "", nil)
+	_, err = a.Client.GM.SendMessage(payload)
 	if err != nil {
 		return fmt.Errorf("send: %w", err)
 	}

@@ -1,6 +1,11 @@
 package db
 
-import "encoding/json"
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+)
 
 func (s *Store) UpsertContact(c *Contact) error {
 	_, err := s.db.Exec(`
@@ -72,7 +77,7 @@ func (s *Store) ListContactsFromConversations(query string, limit int) ([]*Conta
 
 	seen := map[string]bool{}
 	var contacts []*Contact
-	queryLower := toLower(query)
+	queryLower := strings.ToLower(query)
 
 	for rows.Next() {
 		var convID, name, participantsJSON string
@@ -84,7 +89,7 @@ func (s *Store) ListContactsFromConversations(query string, limit int) ([]*Conta
 		if err := json.Unmarshal([]byte(participantsJSON), &participants); err != nil {
 			// Fall back to conversation name if participants can't be parsed
 			if name != "" && !seen[name] {
-				if query == "" || containsLower(name, queryLower) {
+				if query == "" || containsInsensitive(name, queryLower) {
 					seen[name] = true
 					contacts = append(contacts, &Contact{
 						ContactID: convID,
@@ -110,7 +115,7 @@ func (s *Store) ListContactsFromConversations(query string, limit int) ([]*Conta
 			if seen[key] {
 				continue
 			}
-			if query != "" && !containsLower(displayName, queryLower) && !containsLower(p.Number, queryLower) {
+			if query != "" && !containsInsensitive(displayName, queryLower) && !containsInsensitive(p.Number, queryLower) {
 				continue
 			}
 			seen[key] = true
@@ -149,7 +154,7 @@ func (s *Store) GetUnifiedContact(id string) (*UnifiedContact, error) {
 		FROM unified_contacts WHERE unified_id = ?
 	`, id).Scan(&c.UnifiedID, &c.DisplayName, &c.Identifiers)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -184,28 +189,6 @@ func (s *Store) ListUnifiedContacts(query string, limit int) ([]*UnifiedContact,
 	return contacts, rows.Err()
 }
 
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
-func containsLower(s, sub string) bool {
-	s = toLower(s)
-	return len(s) >= len(sub) && searchString(s, sub)
-}
-
-func searchString(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+func containsInsensitive(s, sub string) bool {
+	return strings.Contains(strings.ToLower(s), sub)
 }

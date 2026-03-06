@@ -218,5 +218,8 @@ func (s *Store) migrate() error {
 	// Index for dedup on import
 	s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_source ON messages(source_platform, source_id) WHERE source_id != ''`)
 
+	// Index for platform-filtered conversation queries
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_platform ON conversations(source_platform)`)
+
 	return nil
 }

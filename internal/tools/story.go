@@ -16,6 +16,8 @@ import (
 	"github.com/maxghenis/openmessage/internal/story"
 )
 
+const phraseDisplayLimit = 20
+
 func conversationStatsTool() mcp.Tool {
 	return mcp.NewTool("conversation_stats",
 		mcp.WithDescription("Compute statistics for a conversation: message volume, heatmap, top phrases, response times, gaps. Works with any platform."),
@@ -80,7 +82,7 @@ func conversationStatsHandler(a *app.App) server.ToolHandlerFunc {
 
 		if len(stats.TopPhrases) > 0 {
 			sb.WriteString("\nTop phrases:\n")
-			limit := 20
+			limit := phraseDisplayLimit
 			if len(stats.TopPhrases) < limit {
 				limit = len(stats.TopPhrases)
 			}
@@ -228,7 +230,7 @@ func personStatsHandler(a *app.App) server.ToolHandlerFunc {
 
 		if len(stats.TopPhrases) > 0 {
 			sb.WriteString("\nTop phrases:\n")
-			limit := 20
+			limit := phraseDisplayLimit
 			if len(stats.TopPhrases) < limit {
 				limit = len(stats.TopPhrases)
 			}

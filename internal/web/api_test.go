@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
+	"github.com/maxghenis/openmessage/internal/app"
 	"github.com/maxghenis/openmessage/internal/db"
 )
 
@@ -506,7 +507,7 @@ func TestSendReactionNoClient(t *testing.T) {
 
 func TestBuildSendPayload(t *testing.T) {
 	sim := &gmproto.SIMPayload{SIMNumber: 1}
-	payload := BuildSendPayload("conv-1", "Hello world", "", "+15551234567", sim)
+	payload := app.BuildSendPayload("conv-1", "Hello world", "", "+15551234567", sim)
 
 	// Must use MessageInfo array (not MessagePayloadContent)
 	if payload.MessagePayload.MessagePayloadContent != nil {
@@ -555,7 +556,7 @@ func TestBuildSendPayload(t *testing.T) {
 }
 
 func TestBuildSendPayloadWithReply(t *testing.T) {
-	payload := BuildSendPayload("conv-1", "Reply text", "orig-msg-id", "+15551234567", nil)
+	payload := app.BuildSendPayload("conv-1", "Reply text", "orig-msg-id", "+15551234567", nil)
 	if payload.Reply == nil {
 		t.Fatal("Reply must be set when replyToID is provided")
 	}
@@ -565,7 +566,7 @@ func TestBuildSendPayloadWithReply(t *testing.T) {
 }
 
 func TestBuildSendPayloadNoReply(t *testing.T) {
-	payload := BuildSendPayload("conv-1", "No reply", "", "+15551234567", nil)
+	payload := app.BuildSendPayload("conv-1", "No reply", "", "+15551234567", nil)
 	if payload.Reply != nil {
 		t.Error("Reply must be nil when replyToID is empty")
 	}
@@ -580,7 +581,7 @@ func TestBuildSendMediaPayload(t *testing.T) {
 		Size:      54321,
 		MimeType:  "image/jpeg",
 	}
-	payload := BuildSendMediaPayload("conv-1", media, "+15551234567", sim)
+	payload := app.BuildSendMediaPayload("conv-1", media, "+15551234567", sim)
 
 	// Must use MessageInfo with MediaContent (not MessageContent)
 	if payload.MessagePayload.MessagePayloadContent != nil {

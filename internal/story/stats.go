@@ -11,6 +11,12 @@ import (
 	"github.com/maxghenis/openmessage/internal/db"
 )
 
+const (
+	msPerDay      = 86400000
+	minutesPerDay = 1440
+	maxPhrases    = 100
+)
+
 // Stats holds computed statistics for a conversation or set of messages.
 type Stats struct {
 	TotalMessages int          `json:"total_messages"`
@@ -132,10 +138,10 @@ func ComputeStats(messages []*db.Message, tz *time.Location) *Stats {
 		// Response times and gaps
 		if prevTS > 0 {
 			diffMin := float64(m.TimestampMS-prevTS) / 60000
-			gapDays := float64(m.TimestampMS-prevTS) / 86400000
+			gapDays := float64(m.TimestampMS-prevTS) / msPerDay
 
 			// Response time (only count if sender changed and within 24h)
-			if prevSender != "" && prevSender != sender && diffMin < 1440 {
+			if prevSender != "" && prevSender != sender && diffMin < minutesPerDay {
 				responseTotal[sender] += diffMin
 				responseCount[sender]++
 			}
@@ -174,7 +180,7 @@ func ComputeStats(messages []*db.Message, tz *time.Location) *Stats {
 	}
 
 	// Top phrases (filter stop words)
-	stats.TopPhrases = topPhrases(phraseMap, phraseBySender, 100)
+	stats.TopPhrases = topPhrases(phraseMap, phraseBySender, maxPhrases)
 
 	// Average response times
 	for sender, total := range responseTotal {

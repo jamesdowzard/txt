@@ -3,11 +3,13 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/maxghenis/openmessage/internal/db"
 )
 
 func Register(s *server.MCPServer, a *app.App) {
@@ -88,6 +90,31 @@ func formatMessageBody(body, mediaID, mimeType, messageID string) string {
 		return body + " " + label
 	}
 	return label
+}
+
+// resolveSender returns a display name for the message sender,
+// falling back through SenderName → SenderNumber → "Unknown".
+func resolveSender(m *db.Message) string {
+	sender := m.SenderName
+	if sender == "" {
+		sender = m.SenderNumber
+	}
+	if sender == "" {
+		sender = "Unknown"
+	}
+	return sender
+}
+
+// formatMessageLine returns a single formatted message line like:
+// [2024-01-01T12:00:00Z] → Alice: «Hello!»
+func formatMessageLine(m *db.Message) string {
+	ts := time.UnixMilli(m.TimestampMS).Format(time.RFC3339)
+	direction := "←"
+	if m.IsFromMe {
+		direction = "→"
+	}
+	display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
+	return fmt.Sprintf("[%s] %s %s: «%s»", ts, direction, resolveSender(m), display)
 }
 
 func errorResult(msg string) *mcp.CallToolResult {

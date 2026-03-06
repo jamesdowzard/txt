@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -57,20 +56,8 @@ func getConversationHandler(a *app.App) server.ToolHandlerFunc {
 
 		sb.WriteString(messagePreamble)
 		for _, m := range msgs {
-			ts := time.UnixMilli(m.TimestampMS).Format(time.RFC3339)
-			direction := "←"
-			if m.IsFromMe {
-				direction = "→"
-			}
-			sender := m.SenderName
-			if sender == "" {
-				sender = m.SenderNumber
-			}
-			if sender == "" {
-				sender = "Unknown"
-			}
-			display := formatMessageBody(m.Body, m.MediaID, m.MimeType, m.MessageID)
-			fmt.Fprintf(&sb, "[%s] %s %s: «%s»\n", ts, direction, sender, display)
+			sb.WriteString(formatMessageLine(m))
+			sb.WriteByte('\n')
 		}
 		return textResult(sb.String()), nil
 	}

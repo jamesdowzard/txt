@@ -43,7 +43,7 @@ func downloadMediaHandler(a *app.App) server.ToolHandlerFunc {
 		}
 
 		if a.Client == nil {
-			return errorResult("not connected to Google Messages"), nil
+			return errorResult(app.ErrNotConnected), nil
 		}
 
 		key, err := hex.DecodeString(msg.DecryptionKey)

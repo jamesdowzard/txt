@@ -1,5 +1,10 @@
 package db
 
+import (
+	"database/sql"
+	"errors"
+)
+
 func (s *Store) UpsertDraft(d *Draft) error {
 	_, err := s.db.Exec(`
 		INSERT INTO drafts (draft_id, conversation_id, body, created_at)
@@ -43,7 +48,7 @@ func (s *Store) GetDraft(draftID string) (*Draft, error) {
 	d := &Draft{}
 	err := row.Scan(&d.DraftID, &d.ConversationID, &d.Body, &d.CreatedAt)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
