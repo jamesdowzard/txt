@@ -26,7 +26,7 @@ var staticFS embed.FS
 // APIHandler creates the HTTP handler with JSON API routes and static file serving.
 // The client may be nil (disconnected state).
 // mcpHandler is an optional http.Handler for the MCP SSE endpoint (mounted at /mcp/).
-// onDeepBackfill is an optional callback triggered by POST /api/backfill.
+// StartDeepBackfill can optionally launch a guarded background backfill triggered by POST /api/backfill.
 // StatusChecker returns whether the backend is connected.
 type StatusChecker func() bool
 
@@ -35,26 +35,36 @@ type UnpairFunc func() error
 
 // APIOptions holds optional callbacks for the API handler.
 type APIOptions struct {
-	IsConnected    StatusChecker
-	Unpair         UnpairFunc
-	OnDeepBackfill func()
-	BackfillStatus func() any        // returns a JSON-serializable backfill progress snapshot
-	BackfillPhone  func(string) error // targeted backfill for a single phone number
+	Client            func() *client.Client
+	IsConnected       StatusChecker
+	Unpair            UnpairFunc
+	StartDeepBackfill func() bool
+	BackfillStatus    func() any         // returns a JSON-serializable backfill progress snapshot
+	BackfillPhone     func(string) error // targeted backfill for a single phone number
 }
 
 // APIHandler creates a handler with minimal options (used by tests).
 func APIHandler(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, onDeepBackfill ...func()) http.Handler {
-	var cb func()
+	var cb func() bool
 	if len(onDeepBackfill) > 0 {
-		cb = onDeepBackfill[0]
+		cb = func() bool {
+			onDeepBackfill[0]()
+			return true
+		}
 	}
 	return APIHandlerWithOptions(store, cli, logger, mcpHandler, APIOptions{
-		OnDeepBackfill: cb,
+		StartDeepBackfill: cb,
 	})
 }
 
 func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.Logger, mcpHandler http.Handler, opts APIOptions) http.Handler {
 	mux := http.NewServeMux()
+	getClient := func() *client.Client {
+		if opts.Client != nil {
+			return opts.Client()
+		}
+		return cli
+	}
 
 	mux.HandleFunc("/api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		limit := queryInt(r, "limit", 50)
@@ -79,7 +89,18 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 		convID := parts[0]
 		limit := queryInt(r, "limit", 100)
-		msgs, err := store.GetMessagesByConversation(convID, limit)
+		beforeMS := queryInt64(r, "before", 0)
+		afterMS := queryInt64(r, "after", 0)
+		var msgs []*db.Message
+		var err error
+		switch {
+		case afterMS > 0:
+			msgs, err = store.GetMessagesByConversationAfter(convID, afterMS, limit)
+		case beforeMS > 0:
+			msgs, err = store.GetMessagesByConversationBefore(convID, beforeMS, limit)
+		default:
+			msgs, err = store.GetMessagesByConversation(convID, limit)
+		}
 		if err != nil {
 			httpError(w, "get messages: "+err.Error(), 500)
 			return
@@ -126,6 +147,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "conversation_id and message are required", 400)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -179,6 +201,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "method not allowed", 405)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -281,6 +304,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "no media for this message", 404)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -320,6 +344,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "message_id and emoji are required", 400)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -360,6 +385,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "phone_number is required", 400)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -462,6 +488,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "draft_id and body are required", 400)
 			return
 		}
+		cli := getClient()
 		if cli == nil {
 			httpError(w, app.ErrNotConnected, 503)
 			return
@@ -589,8 +616,11 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "method not allowed", 405)
 			return
 		}
-		if opts.OnDeepBackfill != nil {
-			go opts.OnDeepBackfill()
+		if opts.StartDeepBackfill != nil {
+			if !opts.StartDeepBackfill() {
+				httpError(w, "deep backfill already running", 409)
+				return
+			}
 			writeJSON(w, map[string]string{"status": "started"})
 		} else {
 			httpError(w, "deep backfill not available", 501)
@@ -636,7 +666,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 	})
 
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		connected := cli != nil
+		connected := getClient() != nil
 		if opts.IsConnected != nil {
 			connected = opts.IsConnected()
 		}
@@ -718,6 +748,18 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 		return defaultVal
 	}
 	n, err := strconv.Atoi(s)
+	if err != nil {
+		return defaultVal
+	}
+	return n
+}
+
+func queryInt64(r *http.Request, key string, defaultVal int64) int64 {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		return defaultVal
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return defaultVal
 	}

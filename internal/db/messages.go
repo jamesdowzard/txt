@@ -11,7 +11,13 @@ import (
 const messageColumns = `message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id, source_platform, source_id`
 
 func (s *Store) UpsertMessage(m *Message) error {
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO messages (message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id, source_platform, source_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(message_id) DO UPDATE SET
@@ -30,7 +36,13 @@ func (s *Store) UpsertMessage(m *Message) error {
 			source_platform=excluded.source_platform,
 			source_id=excluded.source_id
 	`, m.MessageID, m.ConversationID, m.SenderName, m.SenderNumber, m.Body, m.TimestampMS, m.Status, m.IsFromMe, m.MediaID, m.MimeType, m.DecryptionKey, m.Reactions, m.ReplyToID, m.SourcePlatform, m.SourceID)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.syncMessageSearchIndex(tx, m.MessageID, m.Body); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetMessagesByConversation(conversationID string, limit int) ([]*Message, error) {
@@ -41,6 +53,36 @@ func (s *Store) GetMessagesByConversation(conversationID string, limit int) ([]*
 		ORDER BY timestamp_ms DESC
 		LIMIT ?
 	`, conversationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *Store) GetMessagesByConversationBefore(conversationID string, beforeMS int64, limit int) ([]*Message, error) {
+	rows, err := s.db.Query(`
+		SELECT `+messageColumns+`
+		FROM messages
+		WHERE conversation_id = ? AND timestamp_ms < ?
+		ORDER BY timestamp_ms DESC
+		LIMIT ?
+	`, conversationID, beforeMS, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *Store) GetMessagesByConversationAfter(conversationID string, afterMS int64, limit int) ([]*Message, error) {
+	rows, err := s.db.Query(`
+		SELECT `+messageColumns+`
+		FROM messages
+		WHERE conversation_id = ? AND timestamp_ms > ?
+		ORDER BY timestamp_ms ASC
+		LIMIT ?
+	`, conversationID, afterMS, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +123,44 @@ func (s *Store) GetMessages(phoneNumber string, afterMS, beforeMS int64, limit i
 }
 
 func (s *Store) SearchMessages(query, phoneNumber string, limit int) ([]*Message, error) {
+	if s.ftsEnabled {
+		msgs, err := s.searchMessagesFTS(query, phoneNumber, limit)
+		if err == nil && len(msgs) > 0 {
+			return msgs, nil
+		}
+	}
+	return s.searchMessagesLike(query, phoneNumber, limit)
+}
+
+func (s *Store) searchMessagesFTS(query, phoneNumber string, limit int) ([]*Message, error) {
+	var conditions []string
+	var args []any
+
+	conditions = append(conditions, "f.body MATCH ?")
+	args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`)
+
+	if phoneNumber != "" {
+		conditions = append(conditions, "m.sender_number = ?")
+		args = append(args, phoneNumber)
+	}
+	args = append(args, limit)
+
+	q := `SELECT m.` + messageColumns + `
+		FROM messages_fts f
+		JOIN messages m ON m.message_id = f.message_id
+		WHERE ` + strings.Join(conditions, " AND ") + `
+		ORDER BY m.timestamp_ms DESC
+		LIMIT ?`
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *Store) searchMessagesLike(query, phoneNumber string, limit int) ([]*Message, error) {
 	var conditions []string
 	var args []any
 
@@ -192,14 +272,33 @@ func (s *Store) GetMessagesByConversationsRange(conversationIDs []string, afterM
 // DeleteTmpMessages removes locally-created tmp_ messages for a conversation.
 // Called when the server echo arrives with a real message ID.
 func (s *Store) DeleteTmpMessages(conversationID string) (int64, error) {
-	result, err := s.db.Exec(
-		`DELETE FROM messages WHERE conversation_id = ? AND message_id LIKE 'tmp_%'`,
-		conversationID,
-	)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
+	defer tx.Rollback()
+
+	result, err := s.deleteMessages(tx, `conversation_id = ? AND message_id LIKE 'tmp_%'`, conversationID)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return result.RowsAffected()
+}
+
+func (s *Store) DeleteMessageByID(messageID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := s.deleteMessages(tx, `message_id = ?`, messageID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MessageCount returns the total number of messages, optionally filtered by source platform.
@@ -242,4 +341,26 @@ func scanMessages(rows interface {
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+func (s *Store) syncMessageSearchIndex(exec interface {
+	Exec(string, ...any) (sql.Result, error)
+}, messageID, body string) error {
+	if !s.ftsEnabled {
+		return nil
+	}
+	if _, err := exec.Exec(`DELETE FROM messages_fts WHERE message_id = ?`, messageID); err != nil {
+		return err
+	}
+	_, err := exec.Exec(`INSERT INTO messages_fts(message_id, body) VALUES (?, ?)`, messageID, body)
+	return err
+}
+
+func (s *Store) deleteMessages(tx *sql.Tx, where string, args ...any) (sql.Result, error) {
+	if s.ftsEnabled {
+		if _, err := tx.Exec(`DELETE FROM messages_fts WHERE message_id IN (SELECT message_id FROM messages WHERE `+where+`)`, args...); err != nil {
+			return nil, err
+		}
+	}
+	return tx.Exec(`DELETE FROM messages WHERE `+where, args...)
 }

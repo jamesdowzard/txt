@@ -29,7 +29,11 @@ func RunSend(logger zerolog.Logger, conversationID, message string) error {
 	}
 
 	payload := app.BuildSendPayload(conversationID, message, "", "", nil)
-	_, err = a.Client.GM.SendMessage(payload)
+	cli := a.GetClient()
+	if cli == nil {
+		return fmt.Errorf("client not connected")
+	}
+	_, err = cli.GM.SendMessage(payload)
 	if err != nil {
 		return fmt.Errorf("send: %w", err)
 	}

@@ -8,7 +8,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db         *sql.DB
+	ftsEnabled bool
 }
 
 type Conversation struct {
@@ -32,7 +33,7 @@ type Message struct {
 	IsFromMe       bool
 	MediaID        string `json:",omitempty"`
 	MimeType       string `json:",omitempty"`
-	DecryptionKey  string `json:"-"` // hex-encoded, never exposed in API
+	DecryptionKey  string `json:"-"`          // hex-encoded, never exposed in API
 	Reactions      string `json:",omitempty"` // JSON array of {emoji, count}
 	ReplyToID      string `json:",omitempty"`
 	SourcePlatform string `json:"source_platform,omitempty"` // sms, gchat, imessage, whatsapp, signal, telegram
@@ -220,6 +221,20 @@ func (s *Store) migrate() error {
 
 	// Index for platform-filtered conversation queries
 	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_platform ON conversations(source_platform)`)
+
+	if _, err := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+		message_id UNINDEXED,
+		body,
+		tokenize='trigram'
+	)`); err == nil {
+		s.ftsEnabled = true
+		if _, err := s.db.Exec(`DELETE FROM messages_fts`); err != nil {
+			return fmt.Errorf("reset messages search index: %w", err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO messages_fts(message_id, body) SELECT message_id, body FROM messages`); err != nil {
+			return fmt.Errorf("rebuild messages search index: %w", err)
+		}
+	}
 
 	return nil
 }

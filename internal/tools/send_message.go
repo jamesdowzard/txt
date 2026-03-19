@@ -33,11 +33,12 @@ func sendMessageHandler(a *app.App) server.ToolHandlerFunc {
 		if message == "" {
 			return errorResult("message is required"), nil
 		}
-		if a.Client == nil {
+		cli := a.GetClient()
+		if cli == nil {
 			return errorResult(app.ErrNotConnected), nil
 		}
 
-		convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
+		convResp, err := cli.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
 			Numbers: app.NewContactNumbers([]string{phone}),
 		})
 		if err != nil {
@@ -50,7 +51,7 @@ func sendMessageHandler(a *app.App) server.ToolHandlerFunc {
 		}
 
 		payload := app.BuildSendPayload(conv.GetConversationID(), message, "", "", nil)
-		_, err = a.Client.GM.SendMessage(payload)
+		_, err = cli.GM.SendMessage(payload)
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to send: %v", err)), nil
 		}

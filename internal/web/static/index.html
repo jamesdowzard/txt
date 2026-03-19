@@ -1663,48 +1663,83 @@ html, body {
     } else {
       $chatHeaderStatus.textContent = '';
     }
-    lastMsgCount = -1; // Force re-render on conversation switch
-    lastDraftCount = -1;
-    lastStatusSig = '';
-    await loadMessages(convo.ConversationID);
+    resetLoadedThreadState();
+    await loadMessages(convo.ConversationID, {reset: true});
 
     // Start polling for new messages
     clearInterval(pollTimer);
-    pollTimer = setInterval(() => loadMessages(activeConvoId), 3000);
+    pollTimer = setInterval(() => loadMessages(activeConvoId, {poll: true}), 3000);
   }
 
   // ─── Load Messages ───
-  let lastMsgCount = 0;
-  let lastDraftCount = 0;
-  let lastStatusSig = '';
+  const MESSAGE_PAGE_SIZE = 100;
+  let loadedMessages = [];
+  let loadedDrafts = [];
+  let oldestLoadedTS = 0;
+  let newestLoadedTS = 0;
+  let hasOlderMessages = true;
+  let loadingOlderMessages = false;
+  let activeThreadToken = 0;
+  let lastThreadSignature = '';
 
-  async function loadMessages(convoId) {
+  function resetLoadedThreadState() {
+    activeThreadToken += 1;
+    loadedMessages = [];
+    loadedDrafts = [];
+    oldestLoadedTS = 0;
+    newestLoadedTS = 0;
+    hasOlderMessages = true;
+    loadingOlderMessages = false;
+    lastThreadSignature = '';
+  }
+
+  function sortMessagesChronologically(msgs) {
+    return msgs.sort((a, b) => {
+      if (a.TimestampMS !== b.TimestampMS) return a.TimestampMS - b.TimestampMS;
+      return String(a.MessageID || '').localeCompare(String(b.MessageID || ''));
+    });
+  }
+
+  function mergeMessages(existing, incoming) {
+    const byId = new Map();
+    existing.forEach(m => byId.set(m.MessageID, m));
+    incoming.forEach(m => byId.set(m.MessageID, m));
+    return sortMessagesChronologically(Array.from(byId.values()));
+  }
+
+  function updateLoadedMessageBounds() {
+    oldestLoadedTS = loadedMessages.length ? loadedMessages[0].TimestampMS : 0;
+    newestLoadedTS = loadedMessages.length ? loadedMessages[loadedMessages.length - 1].TimestampMS : 0;
+  }
+
+  function threadSignature(msgs, drafts) {
+    const tail = msgs.slice(-25).map(m =>
+      [m.MessageID, m.TimestampMS, m.Status || '', m.Reactions || '', m.ReplyToID || '', m.MediaID || '', m.Body || ''].join(':')
+    ).join('|');
+    const draftsSig = drafts.map(d => `${d.DraftID}:${d.Body}`).join('|');
+    return `${msgs.length}::${tail}::${draftsSig}`;
+  }
+
+  async function fetchDrafts(convoId) {
     try {
-      const msgs = await fetchJSON(`/api/conversations/${convoId}/messages?limit=200`);
-      // Reverse: API returns DESC, we want oldest first
-      msgs.reverse();
+      return await fetchJSON(`/api/drafts?conversation_id=${encodeURIComponent(convoId)}&_t=${Date.now()}`);
+    } catch (e) {
+      console.error('Failed to load drafts:', e);
+      return loadedDrafts;
+    }
+  }
 
-      // Check drafts count to detect new drafts even when message count unchanged
-      let draftCount = 0;
-      try {
-        const draftCheck = await fetchJSON(`/api/drafts?conversation_id=${encodeURIComponent(convoId)}&_t=${Date.now()}`);
-        draftCount = draftCheck.length;
-      } catch (e) {}
-      // Track latest outgoing status to detect delivery updates
-      const lastOut = msgs.findLast(m => m.IsFromMe);
-      const statusSig = lastOut ? (lastOut.MessageID + ':' + (lastOut.Status || '')) : '';
-      if (msgs.length === lastMsgCount && draftCount === lastDraftCount && statusSig === lastStatusSig && convoId === activeConvoId) return;
-      lastStatusSig = statusSig;
-      lastMsgCount = msgs.length;
-      lastDraftCount = draftCount;
+  function renderLoadedMessages({older = false, previousScrollTop = 0, previousScrollHeight = 0, stickToBottom = false} = {}) {
+    const msgs = loadedMessages;
+    const drafts = loadedDrafts;
+    const sig = threadSignature(msgs, drafts);
+    if (!older && sig === lastThreadSignature) return;
+    lastThreadSignature = sig;
 
-      const wasAtBottom = $messagesArea.scrollHeight - $messagesArea.scrollTop - $messagesArea.clientHeight < 60;
+    $messagesArea.innerHTML = '';
+    let lastDate = 0;
 
-      $messagesArea.innerHTML = '';
-      let lastDate = 0;
-      let lastSenderName = null; // Track consecutive messages from same sender
-
-      msgs.forEach((m, mi) => {
+    msgs.forEach((m, mi) => {
         // Date divider
         if (!isSameDay(m.TimestampMS, lastDate)) {
           const divider = document.createElement('div');
@@ -1752,7 +1787,6 @@ html, body {
           const isVideo = mimeType.startsWith('video/');
           const hasMediaID = !!m.MediaID;
           const mediaSrc = `/api/media/${encodeURIComponent(m.MessageID)}`;
-          const safeId = CSS.escape(m.MessageID);
 
           if (hasMediaID && isImage) {
             html += `<div class="msg-media">`;
@@ -1858,32 +1892,25 @@ html, body {
         } else {
           $messagesArea.appendChild(el);
         }
-        lastSenderName = m.IsFromMe ? null : m.SenderName;
       });
 
       // Load drafts for this conversation
-      try {
-        const drafts = await fetchJSON(`/api/drafts?conversation_id=${encodeURIComponent(convoId)}&_t=${Date.now()}`);
-        drafts.forEach(draft => {
-          const draftEl = document.createElement('div');
-          draftEl.className = 'draft-banner';
-          draftEl.innerHTML = `
-            <div class="draft-label">AI Draft</div>
-            <textarea class="draft-text" rows="2">${escapeHtml(draft.Body)}</textarea>
-            <div class="draft-actions">
-              <button class="draft-discard-btn" onclick="discardDraft('${escapeHtml(draft.DraftID)}')">Discard</button>
-              <button class="draft-send-btn" onclick="sendDraft('${escapeHtml(draft.DraftID)}', this)">Send</button>
-            </div>
-          `;
-          $messagesArea.appendChild(draftEl);
-          // Auto-resize textarea
-          const ta = draftEl.querySelector('textarea');
-          ta.style.height = 'auto';
-          ta.style.height = ta.scrollHeight + 'px';
-        });
-      } catch (e) {
-        console.error('Failed to load drafts:', e);
-      }
+      drafts.forEach(draft => {
+        const draftEl = document.createElement('div');
+        draftEl.className = 'draft-banner';
+        draftEl.innerHTML = `
+          <div class="draft-label">AI Draft</div>
+          <textarea class="draft-text" rows="2">${escapeHtml(draft.Body)}</textarea>
+          <div class="draft-actions">
+            <button class="draft-discard-btn" onclick="discardDraft('${escapeHtml(draft.DraftID)}')">Discard</button>
+            <button class="draft-send-btn" onclick="sendDraft('${escapeHtml(draft.DraftID)}', this)">Send</button>
+          </div>
+        `;
+        $messagesArea.appendChild(draftEl);
+        const ta = draftEl.querySelector('textarea');
+        ta.style.height = 'auto';
+        ta.style.height = ta.scrollHeight + 'px';
+      });
 
       // Update protocol indicator in header from most recent tombstone
       // msgs are in chronological order (oldest first), so findLast gets the latest
@@ -1894,15 +1921,82 @@ html, body {
         } else if (lastTombstone.Status.includes('TEXT') || lastTombstone.Status.includes('SMS')) {
           $chatHeaderStatus.innerHTML = '<span style="color:var(--text-muted)">SMS</span>';
         }
+      } else if (activeConvoIsGroup) {
+        $chatHeaderStatus.textContent = 'Group chat';
+      } else {
+        $chatHeaderStatus.textContent = '';
       }
 
-      if (wasAtBottom || msgs.length !== lastMsgCount) {
-        $messagesArea.scrollTop = $messagesArea.scrollHeight;
-      }
-    } catch (err) {
-      console.error('Failed to load messages:', err);
+    if (older) {
+      $messagesArea.scrollTop = $messagesArea.scrollHeight - previousScrollHeight + previousScrollTop;
+    } else if (stickToBottom) {
+      $messagesArea.scrollTop = $messagesArea.scrollHeight;
+    } else {
+      $messagesArea.scrollTop = previousScrollTop;
     }
   }
+
+  async function loadMessages(convoId, options = {}) {
+    if (!convoId) return;
+
+    const older = !!options.older;
+    const reset = !!options.reset;
+    const poll = !!options.poll;
+    if (older && (!hasOlderMessages || loadingOlderMessages || !oldestLoadedTS)) return;
+
+    const threadToken = activeThreadToken;
+    const previousScrollTop = $messagesArea.scrollTop;
+    const previousScrollHeight = $messagesArea.scrollHeight;
+    const wasAtBottom = $messagesArea.scrollHeight - $messagesArea.scrollTop - $messagesArea.clientHeight < 60;
+
+    if (older) loadingOlderMessages = true;
+
+    try {
+      if (reset) {
+        const msgs = await fetchJSON(`/api/conversations/${convoId}/messages?limit=${MESSAGE_PAGE_SIZE}`);
+        msgs.reverse();
+        if (threadToken !== activeThreadToken || activeConvoId !== convoId) return;
+        loadedMessages = msgs;
+        const drafts = await fetchDrafts(convoId);
+        if (threadToken !== activeThreadToken || activeConvoId !== convoId) return;
+        loadedDrafts = drafts;
+        hasOlderMessages = msgs.length === MESSAGE_PAGE_SIZE;
+      } else if (older) {
+        const olderMsgs = await fetchJSON(`/api/conversations/${convoId}/messages?before=${encodeURIComponent(oldestLoadedTS)}&limit=${MESSAGE_PAGE_SIZE}`);
+        olderMsgs.reverse();
+        if (threadToken !== activeThreadToken || activeConvoId !== convoId) return;
+        loadedMessages = mergeMessages(olderMsgs, loadedMessages);
+        hasOlderMessages = olderMsgs.length === MESSAGE_PAGE_SIZE;
+      } else {
+        const latestMsgs = await fetchJSON(`/api/conversations/${convoId}/messages?limit=${MESSAGE_PAGE_SIZE}`);
+        latestMsgs.reverse();
+        if (threadToken !== activeThreadToken || activeConvoId !== convoId) return;
+        loadedMessages = mergeMessages(loadedMessages, latestMsgs);
+        const drafts = await fetchDrafts(convoId);
+        if (threadToken !== activeThreadToken || activeConvoId !== convoId) return;
+        loadedDrafts = drafts;
+      }
+
+      updateLoadedMessageBounds();
+      renderLoadedMessages({
+        older,
+        previousScrollTop,
+        previousScrollHeight,
+        stickToBottom: reset || (poll && wasAtBottom) || (!older && !poll)
+      });
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    } finally {
+      if (older) loadingOlderMessages = false;
+    }
+  }
+
+  $messagesArea.addEventListener('scroll', () => {
+    if (!activeConvoId || loadingOlderMessages || !hasOlderMessages) return;
+    if ($messagesArea.scrollTop < 120) {
+      loadMessages(activeConvoId, {older: true});
+    }
+  });
 
   // ─── Draft Actions ───
   window.sendDraft = async function(draftId, btn) {
@@ -1913,8 +2007,7 @@ html, body {
     try {
       const resp = await postJSON('/api/drafts/send', {draft_id: draftId, body: msgText});
       banner.remove();
-      lastDraftCount = 0;
-      loadMessages(activeConvoId);
+      await loadMessages(activeConvoId, {poll: true});
     } catch (e) {
       btn.disabled = false;
       console.error('Failed to send draft:', e);
@@ -1924,7 +2017,7 @@ html, body {
   window.discardDraft = async function(draftId) {
     try {
       await fetch(`/api/drafts/${encodeURIComponent(draftId)}`, {method: 'DELETE'});
-      loadMessages(activeConvoId);
+      await loadMessages(activeConvoId, {poll: true});
     } catch (e) {
       console.error('Failed to discard draft:', e);
     }
@@ -1971,8 +2064,7 @@ html, body {
       }
       clearReply();
       // Refresh to get the real message from server
-      lastMsgCount = -1;
-      await loadMessages(activeConvoId);
+      await loadMessages(activeConvoId, {poll: true});
       await loadConversations();
     } catch (err) {
       console.error('Failed to send:', err);
@@ -2102,7 +2194,7 @@ html, body {
   let screenshotAutoClicked = false;
   async function loadConversations() {
     try {
-      const convos = await fetchJSON('/api/conversations?limit=50');
+      const convos = await fetchJSON('/api/conversations?limit=200');
       renderConversations(convos);
       // In screenshot mode, auto-click the first conversation after render
       if (isScreenshotMode && !screenshotAutoClicked && convos.length > 0) {
@@ -2128,7 +2220,7 @@ html, body {
         action: 'add',
       });
       // Reload to see updated reactions
-      if (activeConvoId) await loadMessages(activeConvoId);
+      if (activeConvoId) await loadMessages(activeConvoId, {poll: true});
     } catch (err) {
       console.error('Failed to send reaction:', err);
     }

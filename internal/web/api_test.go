@@ -11,6 +11,7 @@ import (
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
 	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
 )
 
@@ -151,6 +152,57 @@ func TestGetMessagesWithLimit(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("got %d messages, want 2", len(msgs))
+	}
+}
+
+func TestGetMessagesWithPagingParams(t *testing.T) {
+	ts := newTestServer(t)
+
+	ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1", Name: "Alice", LastMessageTS: 500,
+	})
+	for _, msg := range []db.Message{
+		{MessageID: "m1", ConversationID: "c1", Body: "1", TimestampMS: 100},
+		{MessageID: "m2", ConversationID: "c1", Body: "2", TimestampMS: 200},
+		{MessageID: "m3", ConversationID: "c1", Body: "3", TimestampMS: 300},
+		{MessageID: "m4", ConversationID: "c1", Body: "4", TimestampMS: 400},
+		{MessageID: "m5", ConversationID: "c1", Body: "5", TimestampMS: 500},
+	} {
+		ts.store.UpsertMessage(&msg)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/conversations/c1/messages?before=400&limit=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var before []db.Message
+	if err := json.NewDecoder(resp.Body).Decode(&before); err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("before query got %d messages, want 2", len(before))
+	}
+	if before[0].TimestampMS != 300 || before[1].TimestampMS != 200 {
+		t.Fatalf("before query timestamps = [%d %d], want [300 200]", before[0].TimestampMS, before[1].TimestampMS)
+	}
+
+	resp2, err := http.Get(ts.server.URL + "/api/conversations/c1/messages?after=200&limit=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var after []db.Message
+	if err := json.NewDecoder(resp2.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("after query got %d messages, want 2", len(after))
+	}
+	if after[0].TimestampMS != 300 || after[1].TimestampMS != 400 {
+		t.Fatalf("after query timestamps = [%d %d], want [300 400]", after[0].TimestampMS, after[1].TimestampMS)
 	}
 }
 
@@ -344,11 +396,11 @@ func TestGetMediaReturns503WhenNoClient(t *testing.T) {
 
 	// Message with media but no client to download
 	ts.store.UpsertMessage(&db.Message{
-		MessageID:     "m1",
+		MessageID:      "m1",
 		ConversationID: "c1",
-		MediaID:       "mid-123",
-		MimeType:      "image/jpeg",
-		DecryptionKey: "deadbeef",
+		MediaID:        "mid-123",
+		MimeType:       "image/jpeg",
+		DecryptionKey:  "deadbeef",
 	})
 
 	resp, err := http.Get(ts.server.URL + "/api/media/m1")
@@ -759,6 +811,31 @@ func TestBackfillStatusWithCallback(t *testing.T) {
 	}
 }
 
+func TestBackfillReturnsConflictWhenAlreadyRunning(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	logger := zerolog.Nop()
+	h := APIHandlerWithOptions(store, nil, logger, nil, APIOptions{
+		StartDeepBackfill: func() bool { return false },
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/backfill", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 409 {
+		t.Fatalf("got status %d, want 409", resp.StatusCode)
+	}
+}
+
 func TestBackfillPhoneRequiresPost(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -844,5 +921,51 @@ func TestBackfillPhoneSuccess(t *testing.T) {
 	}
 	if calledWith != "+14157934268" {
 		t.Errorf("BackfillPhone called with %q, want +14157934268", calledWith)
+	}
+}
+
+func TestStatusUsesLiveClientGetter(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	currentClient := &client.Client{}
+	logger := zerolog.Nop()
+	h := APIHandlerWithOptions(store, currentClient, logger, nil, APIOptions{
+		Client: func() *client.Client { return currentClient },
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var status map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status["connected"] != true {
+		t.Fatalf("expected connected=true with live client, got %v", status["connected"])
+	}
+
+	currentClient = nil
+
+	resp2, err := http.Get(srv.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var status2 map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&status2); err != nil {
+		t.Fatal(err)
+	}
+	if status2["connected"] != false {
+		t.Fatalf("expected connected=false after client getter returns nil, got %v", status2["connected"])
 	}
 }

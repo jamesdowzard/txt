@@ -21,7 +21,12 @@ func RunSendGroup(logger zerolog.Logger, phones []string, message string) error 
 		return fmt.Errorf("connect: %w", err)
 	}
 
-	convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
+	cli := a.GetClient()
+	if cli == nil {
+		return fmt.Errorf("client not connected")
+	}
+
+	convResp, err := cli.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
 		Numbers: app.NewContactNumbers(phones),
 	})
 	if err != nil {
@@ -34,7 +39,7 @@ func RunSendGroup(logger zerolog.Logger, phones []string, message string) error 
 	}
 
 	payload := app.BuildSendPayload(conv.GetConversationID(), message, "", "", nil)
-	_, err = a.Client.GM.SendMessage(payload)
+	_, err = cli.GM.SendMessage(payload)
 	if err != nil {
 		return fmt.Errorf("send: %w", err)
 	}

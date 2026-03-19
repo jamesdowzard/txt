@@ -785,7 +785,7 @@ pre {
       <div>
         <h3>Connect to AI</h3>
         <p>The app runs an MCP server automatically. Add it to Claude Code:</p>
-        <pre><code>claude mcp add -s user --transport sse openmessage http://localhost:7007/mcp/sse</code></pre>
+        <pre><code>claude mcp add -s user --transport sse openmessage http://127.0.0.1:7007/mcp/sse</code></pre>
       </div>
     </div>
   </div>
@@ -829,9 +829,9 @@ sudo mv openmessage-linux-arm64 /usr/local/bin/openmessage</code></pre>
         <h3>Start the MCP server</h3>
         <p>One command starts the web UI and MCP server. No macOS app required — works on Linux too.</p>
         <pre><code>openmessage serve</code></pre>
-        <p style="margin-top:6px;font-size:13px;color:var(--text-muted)">Web UI at <code>localhost:7007</code> &middot; MCP at <code>localhost:7007/mcp/sse</code></p>
+        <p style="margin-top:6px;font-size:13px;color:var(--text-muted)">Web UI at <code>127.0.0.1:7007</code> &middot; MCP at <code>127.0.0.1:7007/mcp/sse</code></p>
         <p style="margin-top:8px">Then connect your AI client:</p>
-        <pre><code>claude mcp add -s user --transport sse openmessage http://localhost:7007/mcp/sse</code></pre>
+        <pre><code>claude mcp add -s user --transport sse openmessage http://127.0.0.1:7007/mcp/sse</code></pre>
       </div>
     </div>
   </div>
@@ -846,7 +846,7 @@ sudo mv openmessage-linux-arm64 /usr/local/bin/openmessage</code></pre>
       <div class="step-num" style="font-family:var(--font-sans);font-size:13px">MCP</div>
       <div>
         <h3>Model Context Protocol server</h3>
-        <p>OpenMessage runs an SSE-based MCP server at <code>localhost:7007/mcp/sse</code> whenever the app is open. Any MCP-compatible client (Claude Code, Cursor, etc.) can connect.</p>
+        <p>OpenMessage runs an SSE-based MCP server at <code>127.0.0.1:7007/mcp/sse</code> whenever the app is open. Any MCP-compatible client (Claude Code, Cursor, etc.) can connect.</p>
         <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
             <div style="font-size:13px;color:var(--accent);font-family:var(--font-serif)">list_conversations</div>
@@ -909,7 +909,7 @@ sudo mv openmessage-linux-arm64 /usr/local/bin/openmessage</code></pre>
     "servers": {
       "openmessage": {
         "transport": "http",
-        "url": "http://localhost:7007/mcp/sse"
+        "url": "http://127.0.0.1:7007/mcp/sse"
       }
     }
   }
@@ -921,7 +921,7 @@ sudo mv openmessage-linux-arm64 /usr/local/bin/openmessage</code></pre>
       <div class="step-num" style="font-family:var(--font-sans);font-size:13px">Any</div>
       <div>
         <h3>Works with any MCP client</h3>
-        <p>OpenMessage speaks standard MCP over SSE. Any MCP-compatible client — Cursor, Windsurf, Cline, custom agents — can connect to <code>localhost:7007/mcp/sse</code> and get full read/write access to your texts.</p>
+        <p>OpenMessage speaks standard MCP over SSE. Any MCP-compatible client — Cursor, Windsurf, Cline, custom agents — can connect to <code>127.0.0.1:7007/mcp/sse</code> and get full read/write access to your texts.</p>
       </div>
     </div>
   </div>
