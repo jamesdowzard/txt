@@ -16,11 +16,13 @@ import (
 type OnDisconnect func()
 
 type EventHandler struct {
-	Store        *db.Store
-	Logger       zerolog.Logger
-	SessionPath  string
-	Client       *Client
-	OnDisconnect OnDisconnect
+	Store                 *db.Store
+	Logger                zerolog.Logger
+	SessionPath           string
+	Client                *Client
+	OnConversationsChange func()
+	OnDisconnect          OnDisconnect
+	OnMessagesChange      func(string)
 }
 
 func (h *EventHandler) Handle(rawEvt any) {
@@ -60,7 +62,10 @@ func (h *EventHandler) handleClientReady(evt *events.ClientReady) {
 		Msg("Client ready")
 
 	for _, conv := range evt.Conversations {
-		h.handleConversation(conv)
+		h.storeConversation(conv)
+	}
+	if len(evt.Conversations) > 0 && h.OnConversationsChange != nil {
+		h.OnConversationsChange()
 	}
 }
 
@@ -118,9 +123,25 @@ func (h *EventHandler) handleMessage(evt *libgm.WrappedMessage) {
 		Str("from", senderName).
 		Bool("is_old", evt.IsOld).
 		Msg("Stored message")
+
+	if h.OnMessagesChange != nil {
+		h.OnMessagesChange(dbMsg.ConversationID)
+	}
+	if h.OnConversationsChange != nil {
+		h.OnConversationsChange()
+	}
 }
 
 func (h *EventHandler) handleConversation(conv *gmproto.Conversation) {
+	if !h.storeConversation(conv) {
+		return
+	}
+	if h.OnConversationsChange != nil {
+		h.OnConversationsChange()
+	}
+}
+
+func (h *EventHandler) storeConversation(conv *gmproto.Conversation) bool {
 	participantsJSON := "[]"
 	if ps := conv.GetParticipants(); len(ps) > 0 {
 		type pInfo struct {
@@ -163,9 +184,10 @@ func (h *EventHandler) handleConversation(conv *gmproto.Conversation) {
 
 	if err := h.Store.UpsertConversation(dbConv); err != nil {
 		h.Logger.Error().Err(err).Str("conv_id", dbConv.ConversationID).Msg("Failed to store conversation")
-		return
+		return false
 	}
 	h.Logger.Debug().Str("conv_id", dbConv.ConversationID).Str("name", dbConv.Name).Msg("Stored conversation")
+	return true
 }
 
 func (h *EventHandler) handleAuthRefresh() {

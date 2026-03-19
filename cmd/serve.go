@@ -28,6 +28,11 @@ func RunServe(logger zerolog.Logger) error {
 	}
 	defer a.Close()
 
+	events := web.NewEventBroker()
+	a.OnConversationsChange = events.PublishConversations
+	a.OnMessagesChange = events.PublishMessages
+	a.OnStatusChange = events.PublishStatus
+
 	// Connect to Google Messages (skip in demo mode)
 	if os.Getenv("OPENMESSAGES_DEMO") == "" {
 		if err := a.LoadAndConnect(); err != nil {
@@ -72,6 +77,7 @@ func RunServe(logger zerolog.Logger) error {
 	identityName := app.LocalIdentityName()
 	lastImportErr := map[string]string{}
 	syncLocalPlatforms := func() {
+		changed := false
 		syncPlatform := func(platform, successMsg string, importFromDB func(*db.Store) (*importer.ImportResult, error)) {
 			result, err := importFromDB(a.Store)
 			if err != nil {
@@ -83,6 +89,7 @@ func RunServe(logger zerolog.Logger) error {
 			}
 
 			lastImportErr[platform] = ""
+			changed = true
 			logger.Info().
 				Int("messages", result.MessagesImported).
 				Int("conversations", result.ConversationsCreated).
@@ -95,6 +102,10 @@ func RunServe(logger zerolog.Logger) error {
 		syncPlatform("imessage", "iMessage sync complete", func(store *db.Store) (*importer.ImportResult, error) {
 			return (&importer.IMessage{MyName: identityName}).ImportFromDB(store)
 		})
+		if changed {
+			events.PublishConversations()
+			events.PublishMessages("")
+		}
 	}
 
 	// Run once immediately, then every 30 seconds
@@ -135,6 +146,7 @@ func RunServe(logger zerolog.Logger) error {
 
 	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, web.APIOptions{
 		Client:            a.GetClient,
+		Events:            events,
 		IsConnected:       func() bool { return a.Connected.Load() },
 		Unpair:            a.Unpair,
 		StartDeepBackfill: a.StartDeepBackfill,

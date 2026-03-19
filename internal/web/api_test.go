@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
@@ -21,6 +23,10 @@ type testServer struct {
 }
 
 func newTestServer(t *testing.T) *testServer {
+	return newTestServerWithOptions(t, APIOptions{})
+}
+
+func newTestServerWithOptions(t *testing.T, opts APIOptions) *testServer {
 	t.Helper()
 	store, err := db.New(":memory:")
 	if err != nil {
@@ -28,7 +34,7 @@ func newTestServer(t *testing.T) *testServer {
 	}
 
 	logger := zerolog.Nop()
-	h := APIHandler(store, nil, logger, nil)
+	h := APIHandlerWithOptions(store, nil, logger, nil, opts)
 	srv := httptest.NewServer(h)
 
 	t.Cleanup(func() {
@@ -37,6 +43,56 @@ func newTestServer(t *testing.T) *testServer {
 	})
 
 	return &testServer{store: store, server: srv}
+}
+
+type sseEvent struct {
+	Data  string
+	Event string
+}
+
+func readSSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {
+	t.Helper()
+
+	type result struct {
+		err error
+		evt sseEvent
+	}
+	ch := make(chan result, 1)
+	go func() {
+		var evt sseEvent
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				ch <- result{err: err}
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if line == "" {
+				ch <- result{evt: evt}
+				return
+			}
+			if strings.HasPrefix(line, ":") {
+				continue
+			}
+			if strings.HasPrefix(line, "event: ") {
+				evt.Event = strings.TrimPrefix(line, "event: ")
+			}
+			if strings.HasPrefix(line, "data: ") {
+				evt.Data = strings.TrimPrefix(line, "data: ")
+			}
+		}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			t.Fatal(res.err)
+		}
+		return res.evt
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SSE event")
+		return sseEvent{}
+	}
 }
 
 func TestListConversations(t *testing.T) {
@@ -967,5 +1023,92 @@ func TestStatusUsesLiveClientGetter(t *testing.T) {
 	}
 	if status2["connected"] != false {
 		t.Fatalf("expected connected=false after client getter returns nil, got %v", status2["connected"])
+	}
+}
+
+func TestEventsStreamPublishesStatusAndMessages(t *testing.T) {
+	events := NewEventBroker()
+	ts := newTestServerWithOptions(t, APIOptions{
+		Events:      events,
+		IsConnected: func() bool { return true },
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", got)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	statusEvt := readSSEEvent(t, reader)
+	if statusEvt.Event != EventTypeStatus {
+		t.Fatalf("first SSE event = %q, want %q", statusEvt.Event, EventTypeStatus)
+	}
+
+	var status StreamEvent
+	if err := json.Unmarshal([]byte(statusEvt.Data), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Connected == nil || !*status.Connected {
+		t.Fatalf("initial status event = %+v, want connected=true", status)
+	}
+
+	events.PublishMessages("c1")
+
+	msgEvt := readSSEEvent(t, reader)
+	if msgEvt.Event != EventTypeMessages {
+		t.Fatalf("stream event = %q, want %q", msgEvt.Event, EventTypeMessages)
+	}
+
+	var msg StreamEvent
+	if err := json.Unmarshal([]byte(msgEvt.Data), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.ConversationID != "c1" {
+		t.Fatalf("messages event conversation_id = %q, want c1", msg.ConversationID)
+	}
+}
+
+func TestMarkReadPublishesConversationInvalidation(t *testing.T) {
+	events := NewEventBroker()
+	ts := newTestServerWithOptions(t, APIOptions{
+		Events: events,
+	})
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "Alice",
+		UnreadCount:    1,
+		LastMessageTS:  100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	_ = readSSEEvent(t, reader) // initial status event
+
+	reqBody := strings.NewReader(`{"conversation_id":"c1"}`)
+	markReadResp, err := http.Post(ts.server.URL+"/api/mark-read", "application/json", reqBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer markReadResp.Body.Close()
+
+	if markReadResp.StatusCode != 200 {
+		t.Fatalf("mark-read status = %d, want 200", markReadResp.StatusCode)
+	}
+
+	evt := readSSEEvent(t, reader)
+	if evt.Event != EventTypeConversations {
+		t.Fatalf("stream event = %q, want %q", evt.Event, EventTypeConversations)
 	}
 }

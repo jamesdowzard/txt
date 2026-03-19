@@ -1396,7 +1396,13 @@ html, body {
   const API = '';
   let activeConvoId = null;
   let conversations = [];
-  let pollTimer = null;
+  let conversationsRefreshTimer = null;
+  let eventSource = null;
+  let fallbackConversationsTimer = null;
+  let fallbackStatusTimer = null;
+  let fallbackThreadTimer = null;
+  let streamReconnectTimer = null;
+  let threadRefreshTimer = null;
 
   // ─── DOM refs ───
   const $convoList = document.getElementById('conversation-list');
@@ -1665,10 +1671,6 @@ html, body {
     }
     resetLoadedThreadState();
     await loadMessages(convo.ConversationID, {reset: true});
-
-    // Start polling for new messages
-    clearInterval(pollTimer);
-    pollTimer = setInterval(() => loadMessages(activeConvoId, {poll: true}), 3000);
   }
 
   // ─── Load Messages ───
@@ -2176,17 +2178,118 @@ html, body {
   });
 
   // ─── Status Check ───
+  function setConnectionState(connected) {
+    $connectionBanner.className = connected ? 'connection-banner' : 'connection-banner disconnected';
+  }
+
   async function checkStatus() {
     try {
       const status = await fetchJSON('/api/status');
-      if (status.connected) {
-        $connectionBanner.className = 'connection-banner';
-      } else {
-        $connectionBanner.className = 'connection-banner disconnected';
-      }
+      setConnectionState(!!status.connected);
     } catch {
-      $connectionBanner.className = 'connection-banner disconnected';
+      setConnectionState(false);
     }
+  }
+
+  function scheduleConversationsRefresh(delay = 120) {
+    if ($searchInput.value.trim()) return;
+    clearTimeout(conversationsRefreshTimer);
+    conversationsRefreshTimer = setTimeout(() => {
+      conversationsRefreshTimer = null;
+      loadConversations();
+    }, delay);
+  }
+
+  function scheduleThreadRefresh(conversationId, delay = 100) {
+    if (!activeConvoId) return;
+    if (conversationId && conversationId !== activeConvoId) return;
+    clearTimeout(threadRefreshTimer);
+    threadRefreshTimer = setTimeout(() => {
+      threadRefreshTimer = null;
+      if (activeConvoId) loadMessages(activeConvoId, {poll: true});
+    }, delay);
+  }
+
+  function stopFallbackPolling() {
+    clearInterval(fallbackStatusTimer);
+    clearInterval(fallbackConversationsTimer);
+    clearInterval(fallbackThreadTimer);
+    fallbackStatusTimer = null;
+    fallbackConversationsTimer = null;
+    fallbackThreadTimer = null;
+  }
+
+  function startFallbackPolling() {
+    if (fallbackStatusTimer || fallbackConversationsTimer || fallbackThreadTimer) return;
+    fallbackStatusTimer = setInterval(checkStatus, 10000);
+    fallbackConversationsTimer = setInterval(() => {
+      if (!$searchInput.value.trim()) loadConversations();
+    }, 5000);
+    fallbackThreadTimer = setInterval(() => {
+      if (activeConvoId) loadMessages(activeConvoId, {poll: true});
+    }, 3000);
+  }
+
+  function parseStreamEvent(raw) {
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      console.error('Failed to parse stream event:', err);
+      return {};
+    }
+  }
+
+  function startEventStream() {
+    if (!window.EventSource) {
+      startFallbackPolling();
+      return;
+    }
+    if (eventSource) return;
+
+    const source = new EventSource('/api/events');
+    eventSource = source;
+
+    const markHealthy = () => {
+      stopFallbackPolling();
+      if (streamReconnectTimer) {
+        clearTimeout(streamReconnectTimer);
+        streamReconnectTimer = null;
+      }
+    };
+
+    source.onopen = markHealthy;
+    source.addEventListener('status', (evt) => {
+      markHealthy();
+      const payload = parseStreamEvent(evt.data);
+      setConnectionState(!!payload.connected);
+    });
+    source.addEventListener('conversations', () => {
+      markHealthy();
+      scheduleConversationsRefresh();
+    });
+    source.addEventListener('messages', (evt) => {
+      markHealthy();
+      const payload = parseStreamEvent(evt.data);
+      scheduleConversationsRefresh();
+      scheduleThreadRefresh(payload.conversation_id || '');
+    });
+    source.addEventListener('drafts', (evt) => {
+      markHealthy();
+      const payload = parseStreamEvent(evt.data);
+      scheduleThreadRefresh(payload.conversation_id || '');
+    });
+    source.onerror = () => {
+      startFallbackPolling();
+      if (source.readyState === EventSource.CLOSED && !streamReconnectTimer) {
+        streamReconnectTimer = setTimeout(() => {
+          streamReconnectTimer = null;
+          if (eventSource === source) {
+            eventSource = null;
+            startEventStream();
+          }
+        }, 3000);
+      }
+    };
   }
 
   // ─── Load Conversations ───
@@ -2364,7 +2467,8 @@ html, body {
   function deselectConversation() {
     activeConvoId = null;
     activeConvoIsGroup = false;
-    clearInterval(pollTimer);
+    clearTimeout(threadRefreshTimer);
+    threadRefreshTimer = null;
     document.querySelectorAll('.convo-item').forEach(el => el.classList.remove('active'));
     $emptyState.style.display = '';
     $chatHeader.style.display = 'none';
@@ -2529,12 +2633,9 @@ html, body {
   });
 
   // ─── Init ───
+  startEventStream();
   loadConversations();
   checkStatus();
-  setInterval(checkStatus, 10000);
-  setInterval(() => {
-    if (!$searchInput.value.trim()) loadConversations();
-  }, 5000);
 
   // Screenshot mode: hide banner
   if (isScreenshotMode) {
