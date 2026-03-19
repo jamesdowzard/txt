@@ -36,9 +36,19 @@ func TestHandleMessage_RemovesOnlyMatchingTmpPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var (
+		conversationChanges int
+		messagesChangedFor  string
+	)
 	handler := &EventHandler{
 		Store:  store,
 		Logger: zerolog.Nop(),
+		OnConversationsChange: func() {
+			conversationChanges++
+		},
+		OnMessagesChange: func(conversationID string) {
+			messagesChangedFor = conversationID
+		},
 	}
 
 	handler.handleMessage(&libgm.WrappedMessage{
@@ -76,5 +86,11 @@ func TestHandleMessage_RemovesOnlyMatchingTmpPlaceholder(t *testing.T) {
 		t.Fatalf("lookup real message: %v", err)
 	} else if got == nil {
 		t.Fatal("real echoed message should be stored")
+	}
+	if messagesChangedFor != "c1" {
+		t.Fatalf("messages change callback conversation = %q, want c1", messagesChangedFor)
+	}
+	if conversationChanges != 1 {
+		t.Fatalf("conversation change callback count = %d, want 1", conversationChanges)
 	}
 }

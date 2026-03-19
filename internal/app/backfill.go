@@ -47,6 +47,8 @@ func (a *App) Backfill() error {
 	}
 
 	a.Logger.Info().Int("conversations", len(convos)).Msg("Backfill complete")
+	a.emitConversationsChange()
+	a.emitMessagesChange("")
 	return nil
 }
 
@@ -111,6 +113,8 @@ func (a *App) deepBackfill() {
 		Int("contacts_checked", progress.ContactsChecked).
 		Int("errors", progress.Errors).
 		Msg("Deep backfill complete")
+	a.emitConversationsChange()
+	a.emitMessagesChange("")
 }
 
 // paginateFolder fetches all conversations in a folder using cursor pagination.
@@ -312,6 +316,8 @@ func (a *App) BackfillConversationByPhone(phone string) error {
 		Str("conv_id", conv.GetConversationID()).
 		Int("messages", n).
 		Msg("Phone backfill complete")
+	a.emitConversationsChange()
+	a.emitMessagesChange(conv.GetConversationID())
 
 	return nil
 }

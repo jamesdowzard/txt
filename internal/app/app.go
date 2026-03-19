@@ -100,14 +100,17 @@ func (p *BackfillProgress) snapshot() BackfillProgress {
 }
 
 type App struct {
-	clientMu     sync.RWMutex
-	Client       *client.Client
-	Store        *db.Store
-	EventHandler *client.EventHandler
-	Logger       zerolog.Logger
-	DataDir      string
-	SessionPath  string
-	Connected    atomic.Bool
+	clientMu              sync.RWMutex
+	Client                *client.Client
+	Store                 *db.Store
+	EventHandler          *client.EventHandler
+	Logger                zerolog.Logger
+	DataDir               string
+	SessionPath           string
+	Connected             atomic.Bool
+	OnConversationsChange func()
+	OnMessagesChange      func(string)
+	OnStatusChange        func(bool)
 
 	// gmClient is used by backfill methods. If nil, it's derived from Client.GM.
 	// Set this field directly in tests to inject a mock.
@@ -209,9 +212,16 @@ func (a *App) LoadAndConnect() error {
 		Logger:      a.Logger,
 		SessionPath: a.SessionPath,
 		Client:      cli,
+		OnConversationsChange: func() {
+			a.emitConversationsChange()
+		},
+		OnMessagesChange: func(conversationID string) {
+			a.emitMessagesChange(conversationID)
+		},
 		OnDisconnect: func() {
 			a.Connected.Store(false)
 			a.setClient(nil)
+			a.emitStatusChange(false)
 			a.Logger.Warn().Msg("Disconnected from Google Messages")
 		},
 	}
@@ -221,6 +231,7 @@ func (a *App) LoadAndConnect() error {
 		return fmt.Errorf("connect: %w", err)
 	}
 	a.Connected.Store(true)
+	a.emitStatusChange(true)
 	a.Logger.Info().Msg("Connected to Google Messages")
 	return nil
 }
@@ -228,6 +239,7 @@ func (a *App) LoadAndConnect() error {
 // Unpair deletes the session file so the app can re-pair.
 func (a *App) Unpair() error {
 	a.Connected.Store(false)
+	a.emitStatusChange(false)
 	if cli := a.GetClient(); cli != nil {
 		cli.GM.Disconnect()
 		a.setClient(nil)
@@ -257,6 +269,24 @@ func (a *App) StartDeepBackfill() bool {
 	}
 	go a.deepBackfill()
 	return true
+}
+
+func (a *App) emitConversationsChange() {
+	if a.OnConversationsChange != nil {
+		a.OnConversationsChange()
+	}
+}
+
+func (a *App) emitMessagesChange(conversationID string) {
+	if a.OnMessagesChange != nil {
+		a.OnMessagesChange(conversationID)
+	}
+}
+
+func (a *App) emitStatusChange(connected bool) {
+	if a.OnStatusChange != nil {
+		a.OnStatusChange(connected)
+	}
 }
 
 func (a *App) IsDeepBackfillRunning() bool {

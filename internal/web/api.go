@@ -36,6 +36,7 @@ type UnpairFunc func() error
 // APIOptions holds optional callbacks for the API handler.
 type APIOptions struct {
 	Client            func() *client.Client
+	Events            *EventBroker
 	IsConnected       StatusChecker
 	Unpair            UnpairFunc
 	StartDeepBackfill func() bool
@@ -65,6 +66,78 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 		return cli
 	}
+	publishConversations := func() {
+		if opts.Events != nil {
+			opts.Events.PublishConversations()
+		}
+	}
+	publishDrafts := func(conversationID string) {
+		if opts.Events != nil {
+			opts.Events.PublishDrafts(conversationID)
+		}
+	}
+	publishMessages := func(conversationID string) {
+		if opts.Events != nil {
+			opts.Events.PublishMessages(conversationID)
+		}
+	}
+	publishStatus := func(connected bool) {
+		if opts.Events != nil {
+			opts.Events.PublishStatus(connected)
+		}
+	}
+
+	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+		if opts.Events == nil {
+			httpError(w, "event stream not available", 404)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			httpError(w, "streaming not supported", 500)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		connected := getClient() != nil
+		if opts.IsConnected != nil {
+			connected = opts.IsConnected()
+		}
+		if err := writeSSEEvent(w, StreamEvent{
+			Type:      EventTypeStatus,
+			Connected: &connected,
+		}); err != nil {
+			return
+		}
+		flusher.Flush()
+
+		subID, ch := opts.Events.Subscribe()
+		defer opts.Events.Unsubscribe(subID)
+
+		keepalive := time.NewTicker(25 * time.Second)
+		defer keepalive.Stop()
+
+		for {
+			select {
+			case evt := <-ch:
+				if err := writeSSEEvent(w, evt); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-keepalive.C:
+				if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	})
 
 	mux.HandleFunc("/api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		limit := queryInt(r, "limit", 50)
@@ -189,6 +262,8 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			})
 			// Bump conversation to top of list
 			store.UpdateConversationTimestamp(req.ConversationID, now)
+			publishMessages(req.ConversationID)
+			publishConversations()
 		}
 		writeJSON(w, map[string]any{
 			"status":  resp.GetStatus().String(),
@@ -282,6 +357,8 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 				DecryptionKey:  hex.EncodeToString(media.DecryptionKey),
 			})
 			store.UpdateConversationTimestamp(convID, now)
+			publishMessages(convID)
+			publishConversations()
 		}
 		writeJSON(w, map[string]any{
 			"status":  resp.GetStatus().String(),
@@ -424,6 +501,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			Name:           name,
 			LastMessageTS:  time.Now().UnixMilli(),
 		})
+		publishConversations()
 
 		writeJSON(w, map[string]any{
 			"conversation_id": convoID,
@@ -451,6 +529,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "mark read: "+err.Error(), 500)
 			return
 		}
+		publishConversations()
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
@@ -539,6 +618,9 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			})
 			store.UpdateConversationTimestamp(draft.ConversationID, now)
 			store.DeleteDraft(req.DraftID)
+			publishMessages(draft.ConversationID)
+			publishDrafts(draft.ConversationID)
+			publishConversations()
 		}
 		writeJSON(w, map[string]any{
 			"status":  resp.GetStatus().String(),
@@ -556,9 +638,18 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "draft_id required", 400)
 			return
 		}
+		draft, err := store.GetDraft(draftID)
+		if err != nil {
+			httpError(w, "get draft: "+err.Error(), 500)
+			return
+		}
 		if err := store.DeleteDraft(draftID); err != nil {
 			httpError(w, "delete draft: "+err.Error(), 500)
 			return
+		}
+		if draft != nil {
+			publishDrafts(draft.ConversationID)
+			publishMessages(draft.ConversationID)
 		}
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
@@ -662,6 +753,8 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			httpError(w, "backfill phone: "+err.Error(), 502)
 			return
 		}
+		publishConversations()
+		publishMessages("")
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
@@ -686,6 +779,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 				return
 			}
 		}
+		publishStatus(false)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
@@ -734,6 +828,24 @@ func BuildReactionPayload(messageID, emoji, action string, sim *gmproto.SIMPaylo
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func writeSSEEvent(w http.ResponseWriter, evt StreamEvent) error {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "event: "+evt.Type+"\n"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "data: "); err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, "\n\n")
+	return err
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

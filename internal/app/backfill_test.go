@@ -26,10 +26,10 @@ type mockGMClient struct {
 	getOrCreateResults map[string]*gmproto.Conversation
 
 	// Error injection
-	listConvErrors   map[gmproto.ListConversationsRequest_Folder]error // folder -> error
-	fetchMsgErrors   map[string]error                                  // convID -> error
-	listContactsErr  error
-	getOrCreateErrs  map[string]error // phone -> error
+	listConvErrors  map[gmproto.ListConversationsRequest_Folder]error // folder -> error
+	fetchMsgErrors  map[string]error                                  // convID -> error
+	listContactsErr error
+	getOrCreateErrs map[string]error // phone -> error
 }
 
 func (m *mockGMClient) ListConversationsWithCursor(count int, folder gmproto.ListConversationsRequest_Folder, cursor *gmproto.Cursor) (*gmproto.ListConversationsResponse, error) {
@@ -132,7 +132,7 @@ func makeConv(id, name string) *gmproto.Conversation {
 	return &gmproto.Conversation{
 		ConversationID:       id,
 		Name:                 name,
-		LastMessageTimestamp:  1000000, // 1000ms
+		LastMessageTimestamp: 1000000, // 1000ms
 	}
 }
 
@@ -205,7 +205,7 @@ func TestDeepBackfillMultiPageSingleFolder(t *testing.T) {
 	mock := &mockGMClient{
 		conversations: map[gmproto.ListConversationsRequest_Folder][][]*gmproto.Conversation{
 			gmproto.ListConversationsRequest_INBOX: {
-				{makeConv("c1", "Alice"), makeConv("c2", "Bob")},    // page 0
+				{makeConv("c1", "Alice"), makeConv("c2", "Bob")},     // page 0
 				{makeConv("c3", "Charlie"), makeConv("c4", "Diana")}, // page 1
 			},
 		},
@@ -332,8 +332,8 @@ func TestDeepBackfillContactDiscovery(t *testing.T) {
 			},
 		},
 		messages: map[string][][]*gmproto.Message{
-			"c1":      {{makeMsg("m1", "c1", "hi", 100)}},
-			"c-mary":  {{makeMsg("m2", "c-mary", "old msg", 50)}},
+			"c1":     {{makeMsg("m1", "c1", "hi", 100)}},
+			"c-mary": {{makeMsg("m2", "c-mary", "old msg", 50)}},
 		},
 		contacts: []*gmproto.Contact{
 			{
@@ -555,6 +555,42 @@ func TestDeepBackfillEmptyFolders(t *testing.T) {
 	}
 }
 
+func TestDeepBackfillPublishesChangeNotifications(t *testing.T) {
+	mock := &mockGMClient{
+		conversations: map[gmproto.ListConversationsRequest_Folder][][]*gmproto.Conversation{
+			gmproto.ListConversationsRequest_INBOX: {
+				{makeConv("c1", "Alice")},
+			},
+		},
+		messages: map[string][][]*gmproto.Message{
+			"c1": {
+				{makeMsg("m1", "c1", "hello", 100)},
+			},
+		},
+	}
+
+	a := newTestApp(t, mock)
+	var (
+		conversationChanges int
+		messagesChangedFor  string
+	)
+	a.OnConversationsChange = func() {
+		conversationChanges++
+	}
+	a.OnMessagesChange = func(conversationID string) {
+		messagesChangedFor = conversationID
+	}
+
+	a.DeepBackfill()
+
+	if conversationChanges != 1 {
+		t.Fatalf("conversation change callback count = %d, want 1", conversationChanges)
+	}
+	if messagesChangedFor != "" {
+		t.Fatalf("messages change callback conversation = %q, want global refresh", messagesChangedFor)
+	}
+}
+
 func TestDeepBackfillTargetedPhoneBackfill(t *testing.T) {
 	mock := &mockGMClient{
 		getOrCreateResults: map[string]*gmproto.Conversation{
@@ -569,6 +605,16 @@ func TestDeepBackfillTargetedPhoneBackfill(t *testing.T) {
 	}
 
 	a := newTestApp(t, mock)
+	var (
+		conversationChanges int
+		messagesChangedFor  string
+	)
+	a.OnConversationsChange = func() {
+		conversationChanges++
+	}
+	a.OnMessagesChange = func(conversationID string) {
+		messagesChangedFor = conversationID
+	}
 	err := a.BackfillConversationByPhone("+14157934268")
 	if err != nil {
 		t.Fatalf("BackfillConversationByPhone: %v", err)
@@ -585,6 +631,12 @@ func TestDeepBackfillTargetedPhoneBackfill(t *testing.T) {
 	msgs, _ := a.Store.GetMessagesByConversation("c-mary", 100)
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3 (2 pages)", len(msgs))
+	}
+	if conversationChanges != 1 {
+		t.Fatalf("conversation change callback count = %d, want 1", conversationChanges)
+	}
+	if messagesChangedFor != "c-mary" {
+		t.Fatalf("messages change callback conversation = %q, want c-mary", messagesChangedFor)
 	}
 }
 
