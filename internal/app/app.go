@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -99,6 +100,7 @@ func (p *BackfillProgress) snapshot() BackfillProgress {
 }
 
 type App struct {
+	clientMu     sync.RWMutex
 	Client       *client.Client
 	Store        *db.Store
 	EventHandler *client.EventHandler
@@ -109,8 +111,9 @@ type App struct {
 
 	// gmClient is used by backfill methods. If nil, it's derived from Client.GM.
 	// Set this field directly in tests to inject a mock.
-	gmClient         GMClient
-	BackfillProgress BackfillProgress
+	gmClient            GMClient
+	BackfillProgress    BackfillProgress
+	deepBackfillRunning atomic.Bool
 }
 
 func DefaultDataDir() string {
@@ -162,6 +165,33 @@ func New(logger zerolog.Logger) (*App, error) {
 	return app, nil
 }
 
+func LocalIdentityName() string {
+	if name := os.Getenv("OPENMESSAGES_MY_NAME"); name != "" {
+		return name
+	}
+	if currentUser, err := user.Current(); err == nil {
+		if currentUser.Name != "" {
+			return currentUser.Name
+		}
+		if currentUser.Username != "" {
+			return currentUser.Username
+		}
+	}
+	return "Me"
+}
+
+func (a *App) GetClient() *client.Client {
+	a.clientMu.RLock()
+	defer a.clientMu.RUnlock()
+	return a.Client
+}
+
+func (a *App) setClient(cli *client.Client) {
+	a.clientMu.Lock()
+	defer a.clientMu.Unlock()
+	a.Client = cli
+}
+
 func (a *App) LoadAndConnect() error {
 	sessionData, err := client.LoadSession(a.SessionPath)
 	if err != nil {
@@ -172,7 +202,7 @@ func (a *App) LoadAndConnect() error {
 	if err != nil {
 		return fmt.Errorf("create client: %w", err)
 	}
-	a.Client = cli
+	a.setClient(cli)
 
 	a.EventHandler = &client.EventHandler{
 		Store:       a.Store,
@@ -181,6 +211,7 @@ func (a *App) LoadAndConnect() error {
 		Client:      cli,
 		OnDisconnect: func() {
 			a.Connected.Store(false)
+			a.setClient(nil)
 			a.Logger.Warn().Msg("Disconnected from Google Messages")
 		},
 	}
@@ -197,9 +228,9 @@ func (a *App) LoadAndConnect() error {
 // Unpair deletes the session file so the app can re-pair.
 func (a *App) Unpair() error {
 	a.Connected.Store(false)
-	if a.Client != nil {
-		a.Client.GM.Disconnect()
-		a.Client = nil
+	if cli := a.GetClient(); cli != nil {
+		cli.GM.Disconnect()
+		a.setClient(nil)
 	}
 	if err := os.Remove(a.SessionPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove session: %w", err)
@@ -214,10 +245,22 @@ func (a *App) getGMClient() GMClient {
 	if a.gmClient != nil {
 		return a.gmClient
 	}
-	if a.Client != nil {
-		return newRealGMClient(a.Client.GM)
+	if cli := a.GetClient(); cli != nil {
+		return newRealGMClient(cli.GM)
 	}
 	return nil
+}
+
+func (a *App) StartDeepBackfill() bool {
+	if !a.deepBackfillRunning.CompareAndSwap(false, true) {
+		return false
+	}
+	go a.deepBackfill()
+	return true
+}
+
+func (a *App) IsDeepBackfillRunning() bool {
+	return a.deepBackfillRunning.Load()
 }
 
 // GetBackfillProgress returns a snapshot of the current backfill progress.
@@ -226,8 +269,8 @@ func (a *App) GetBackfillProgress() BackfillProgress {
 }
 
 func (a *App) Close() {
-	if a.Client != nil {
-		a.Client.GM.Disconnect()
+	if cli := a.GetClient(); cli != nil {
+		cli.GM.Disconnect()
 	}
 	if a.Store != nil {
 		a.Store.Close()

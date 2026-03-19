@@ -44,11 +44,12 @@ func sendGroupMessageHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("phone_numbers must contain at least 2 numbers for a group message"), nil
 		}
 
-		if a.Client == nil {
+		cli := a.GetClient()
+		if cli == nil {
 			return errorResult(app.ErrNotConnected), nil
 		}
 
-		convResp, err := a.Client.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
+		convResp, err := cli.GM.GetOrCreateConversation(&gmproto.GetOrCreateConversationRequest{
 			Numbers: app.NewContactNumbers(phones),
 		})
 		if err != nil {
@@ -61,7 +62,7 @@ func sendGroupMessageHandler(a *app.App) server.ToolHandlerFunc {
 		}
 
 		payload := app.BuildSendPayload(conv.GetConversationID(), message, "", "", nil)
-		_, err = a.Client.GM.SendMessage(payload)
+		_, err = cli.GM.SendMessage(payload)
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to send group message: %v", err)), nil
 		}

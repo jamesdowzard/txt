@@ -18,7 +18,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: openmessage <pair|serve|send|import>")
 		fmt.Fprintln(os.Stderr, "  pair                                      - Pair with your phone via QR code")
-		fmt.Fprintln(os.Stderr, "  serve                                     - Start MCP server (stdio)")
+		fmt.Fprintln(os.Stderr, "  serve                                     - Start the local web UI and MCP transports")
 		fmt.Fprintln(os.Stderr, "  send <conversation_id> <msg>              - Send message to a conversation")
 		fmt.Fprintln(os.Stderr, "  send-group <phone1,phone2,...> <msg>       - Send group message (MMS)")
 		fmt.Fprintln(os.Stderr, "  import gchat <groups-dir> [--email you@]  - Import Google Chat Takeout")

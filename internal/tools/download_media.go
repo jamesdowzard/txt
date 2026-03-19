@@ -42,7 +42,8 @@ func downloadMediaHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult("this message has no media attachment"), nil
 		}
 
-		if a.Client == nil {
+		cli := a.GetClient()
+		if cli == nil {
 			return errorResult(app.ErrNotConnected), nil
 		}
 
@@ -51,7 +52,7 @@ func downloadMediaHandler(a *app.App) server.ToolHandlerFunc {
 			return errorResult(fmt.Sprintf("invalid decryption key: %v", err)), nil
 		}
 
-		data, err := a.Client.GM.DownloadMedia(msg.MediaID, key)
+		data, err := cli.GM.DownloadMedia(msg.MediaID, key)
 		if err != nil {
 			return errorResult(fmt.Sprintf("download media: %v", err)), nil
 		}

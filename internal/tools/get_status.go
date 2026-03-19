@@ -23,14 +23,15 @@ func getStatusHandler(a *app.App) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var sb strings.Builder
 
-		if a.Client == nil {
+		cli := a.GetClient()
+		if cli == nil {
 			sb.WriteString("Status: not connected\n")
 			sb.WriteString("Run 'gmessages-mcp pair' to connect.\n")
 			return textResult(sb.String()), nil
 		}
 
-		connected := a.Client.GM.IsConnected()
-		loggedIn := a.Client.GM.IsLoggedIn()
+		connected := cli.GM.IsConnected()
+		loggedIn := cli.GM.IsLoggedIn()
 
 		sb.WriteString("Status: ")
 		if connected {
@@ -41,7 +42,7 @@ func getStatusHandler(a *app.App) server.ToolHandlerFunc {
 
 		fmt.Fprintf(&sb, "Logged in: %v\n", loggedIn)
 
-		if ad := a.Client.GM.AuthData; ad != nil {
+		if ad := cli.GM.AuthData; ad != nil {
 			if ad.Mobile != nil {
 				fmt.Fprintf(&sb, "Phone ID: %s\n", ad.Mobile.GetSourceID())
 			}

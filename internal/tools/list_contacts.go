@@ -30,7 +30,7 @@ func listContactsHandler(a *app.App) server.ToolHandlerFunc {
 
 		// If no contacts in DB yet, try fetching from phone
 		contacts, err := a.Store.ListContacts("", 1)
-		if err == nil && len(contacts) == 0 && a.Client != nil {
+		if err == nil && len(contacts) == 0 && a.GetClient() != nil {
 			if err := fetchAndCacheContacts(a); err != nil {
 				a.Logger.Warn().Err(err).Msg("Failed to fetch contacts from phone")
 			}
@@ -67,10 +67,11 @@ func listContactsHandler(a *app.App) server.ToolHandlerFunc {
 }
 
 func fetchAndCacheContacts(a *app.App) error {
-	if a.Client == nil {
+	cli := a.GetClient()
+	if cli == nil {
 		return fmt.Errorf("not connected")
 	}
-	resp, err := a.Client.GM.ListContacts()
+	resp, err := cli.GM.ListContacts()
 	if err != nil {
 		return err
 	}

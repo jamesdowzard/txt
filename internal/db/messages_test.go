@@ -520,6 +520,114 @@ func TestDeleteTmpMessages_Comprehensive(t *testing.T) {
 	})
 }
 
+func TestDeleteMessageByID_RemovesSearchIndexEntry(t *testing.T) {
+	store := newTestStore(t)
+	if !store.ftsEnabled {
+		t.Skip("fts index not enabled in this sqlite build")
+	}
+
+	msg := &Message{
+		MessageID:      "msg-delete-me",
+		ConversationID: "c1",
+		Body:           "Price is $100.00 (50% off!)",
+		TimestampMS:    1000,
+	}
+	if err := store.UpsertMessage(msg); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := store.SearchMessages("$100", "", 10)
+	if err != nil {
+		t.Fatalf("search before delete: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", len(got))
+	}
+
+	if err := store.DeleteMessageByID(msg.MessageID); err != nil {
+		t.Fatalf("delete by id: %v", err)
+	}
+
+	got, err = store.SearchMessages("$100", "", 10)
+	if err != nil {
+		t.Fatalf("search after delete: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected 0 results after delete, got %d", len(got))
+	}
+}
+
+func TestGetMessagesByConversationPaging(t *testing.T) {
+	store := newTestStore(t)
+
+	for i, ts := range []int64{100, 200, 300, 400, 500} {
+		if err := store.UpsertMessage(&Message{
+			MessageID:      fmt.Sprintf("m%d", i+1),
+			ConversationID: "c1",
+			Body:           fmt.Sprintf("msg %d", i+1),
+			TimestampMS:    ts,
+		}); err != nil {
+			t.Fatalf("seed message %d: %v", i+1, err)
+		}
+	}
+
+	before, err := store.GetMessagesByConversationBefore("c1", 400, 2)
+	if err != nil {
+		t.Fatalf("before query: %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("before count: got %d, want 2", len(before))
+	}
+	if before[0].TimestampMS != 300 || before[1].TimestampMS != 200 {
+		t.Fatalf("before ordering: got [%d %d], want [300 200]", before[0].TimestampMS, before[1].TimestampMS)
+	}
+
+	after, err := store.GetMessagesByConversationAfter("c1", 200, 2)
+	if err != nil {
+		t.Fatalf("after query: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("after count: got %d, want 2", len(after))
+	}
+	if after[0].TimestampMS != 300 || after[1].TimestampMS != 400 {
+		t.Fatalf("after ordering: got [%d %d], want [300 400]", after[0].TimestampMS, after[1].TimestampMS)
+	}
+}
+
+func TestSearchMessages_FTSFallbackStillFindsSpecialQueries(t *testing.T) {
+	store := newTestStore(t)
+	if !store.ftsEnabled {
+		t.Skip("fts index not enabled in this sqlite build")
+	}
+
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "special-1",
+		ConversationID: "c1",
+		Body:           "Price is $100.00 (50% off!)",
+		TimestampMS:    1000,
+	}); err != nil {
+		t.Fatalf("upsert special chars: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "special-2",
+		ConversationID: "c1",
+		Body:           "Great job! 🎉",
+		TimestampMS:    1001,
+	}); err != nil {
+		t.Fatalf("upsert emoji: %v", err)
+	}
+
+	for _, q := range []string{"$100", "50%", "🎉"} {
+		got, err := store.SearchMessages(q, "", 10)
+		if err != nil {
+			t.Fatalf("search %q: %v", q, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("search %q returned %d results, want 1", q, len(got))
+		}
+	}
+}
+
 func TestGetMessages_OrderingIsDescending(t *testing.T) {
 	store := newTestStore(t)
 

@@ -34,8 +34,10 @@ A QR code appears in your terminal. On your phone, open **Google Messages > Sett
 ```
 
 This starts both:
-- **MCP server** on stdio (for Claude Code)
-- **Web UI** at [http://localhost:7007](http://localhost:7007)
+- **Web UI** at [http://127.0.0.1:7007](http://127.0.0.1:7007)
+- **MCP SSE endpoint** at `http://127.0.0.1:7007/mcp/sse`
+
+When `serve` is launched by an MCP client over pipes, it also serves MCP on stdio automatically.
 
 ### 4. Connect to Claude Code
 
@@ -93,13 +95,16 @@ The web UI runs at `http://localhost:7007` when the server is started. It provid
 | `OPENMESSAGES_DATA_DIR` | `~/.local/share/openmessage` | Data directory (DB + session) |
 | `OPENMESSAGES_LOG_LEVEL` | `info` | Log level (debug/info/warn/error/trace) |
 | `OPENMESSAGES_PORT` | `7007` | Web UI port |
+| `OPENMESSAGES_HOST` | `127.0.0.1` | Host/interface to bind the local web server to |
+| `OPENMESSAGES_MY_NAME` | system user name | Display name for outgoing imported iMessage/WhatsApp messages |
+| `OPENMESSAGES_STARTUP_BACKFILL` | `auto` | Startup history sync mode: `auto`, `shallow`, `deep`, or `off` |
 
 ## Architecture
 
 - **libgm** handles the Google Messages protocol (pairing, encryption, long-polling)
 - **SQLite** (WAL mode, pure Go) stores messages, conversations, and contacts locally
 - Real-time events from the phone are written to SQLite as they arrive
-- Backfill fetches conversation history on startup
+- On first run, a deep backfill fetches full SMS/RCS history in the background; later runs do a lighter incremental sync by default
 - MCP tool handlers read from SQLite for queries, call libgm for sends
 - Auth tokens auto-refresh and persist to `session.json`
 

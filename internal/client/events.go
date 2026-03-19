@@ -3,7 +3,6 @@ package client
 import (
 	"encoding/hex"
 	"encoding/json"
-	"strings"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm"
@@ -105,10 +104,12 @@ func (h *EventHandler) handleMessage(evt *libgm.WrappedMessage) {
 	}
 
 	// When our sent message echoes back with a real server ID, clean up the
-	// tmp_ placeholder we stored at send time to avoid duplicates in the UI.
-	if dbMsg.IsFromMe && !strings.HasPrefix(dbMsg.MessageID, "tmp_") {
-		if n, err := h.Store.DeleteTmpMessages(dbMsg.ConversationID); err == nil && n > 0 {
-			h.Logger.Debug().Int64("deleted", n).Str("conv_id", dbMsg.ConversationID).Msg("Cleaned up tmp messages")
+	// exact tmp_ placeholder we stored at send time to avoid duplicates.
+	if dbMsg.IsFromMe {
+		if tmpID := msg.GetTmpID(); tmpID != "" && tmpID != dbMsg.MessageID {
+			if err := h.Store.DeleteMessageByID(tmpID); err == nil {
+				h.Logger.Debug().Str("tmp_id", tmpID).Str("conv_id", dbMsg.ConversationID).Msg("Cleaned up tmp message")
+			}
 		}
 	}
 

@@ -14,13 +14,14 @@ import (
 // Backfill fetches existing conversations and recent messages from
 // Google Messages and stores them in the local database.
 func (a *App) Backfill() error {
-	if a.Client == nil {
+	cli := a.GetClient()
+	if cli == nil {
 		return fmt.Errorf("client not connected")
 	}
 
 	a.Logger.Info().Msg("Starting backfill of conversations and messages")
 
-	resp, err := a.Client.GM.ListConversations(100, gmproto.ListConversationsRequest_INBOX)
+	resp, err := cli.GM.ListConversations(100, gmproto.ListConversationsRequest_INBOX)
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
 	}
@@ -34,7 +35,7 @@ func (a *App) Backfill() error {
 			continue
 		}
 
-		msgResp, err := a.Client.GM.FetchMessages(conv.GetConversationID(), 20, nil)
+		msgResp, err := cli.GM.FetchMessages(conv.GetConversationID(), 20, nil)
 		if err != nil {
 			a.Logger.Warn().Err(err).Str("conv_id", conv.GetConversationID()).Msg("Failed to fetch messages")
 			continue
@@ -53,6 +54,16 @@ func (a *App) Backfill() error {
 // fetches ALL messages for each conversation, and discovers conversations via
 // contacts that may not appear in any folder listing.
 func (a *App) DeepBackfill() {
+	if !a.deepBackfillRunning.CompareAndSwap(false, true) {
+		a.Logger.Warn().Msg("Deep backfill already running")
+		return
+	}
+	a.deepBackfill()
+}
+
+func (a *App) deepBackfill() {
+	defer a.deepBackfillRunning.Store(false)
+
 	gm := a.getGMClient()
 	if gm == nil {
 		a.Logger.Error().Msg("Deep backfill: client not connected")

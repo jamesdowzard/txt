@@ -6,13 +6,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
+	"golang.org/x/term"
 
 	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/maxghenis/openmessage/internal/db"
 	"github.com/maxghenis/openmessage/internal/importer"
 	"github.com/maxghenis/openmessage/internal/tools"
 	"github.com/maxghenis/openmessage/internal/web"
@@ -31,37 +34,67 @@ func RunServe(logger zerolog.Logger) error {
 			return fmt.Errorf("connect: %w", err)
 		}
 
-		// Backfill existing conversations and messages
-		go func() {
-			if err := a.Backfill(); err != nil {
-				logger.Warn().Err(err).Msg("Backfill failed")
+		mode := startupBackfillMode()
+		runShallowBackfill := func() {
+			go func() {
+				if err := a.Backfill(); err != nil {
+					logger.Warn().Err(err).Msg("Backfill failed")
+				}
+			}()
+		}
+		switch mode {
+		case "off":
+			logger.Info().Msg("Startup backfill disabled")
+		case "deep":
+			if a.StartDeepBackfill() {
+				logger.Info().Msg("Started deep startup backfill")
 			}
-		}()
+		case "shallow":
+			runShallowBackfill()
+		default:
+			smsCount, err := a.Store.MessageCount("sms")
+			if err != nil {
+				logger.Warn().Err(err).Msg("Failed to inspect local SMS cache; falling back to shallow backfill")
+				runShallowBackfill()
+			} else if smsCount == 0 {
+				if a.StartDeepBackfill() {
+					logger.Info().Msg("No cached SMS history found; started deep startup backfill")
+				}
+			} else {
+				runShallowBackfill()
+			}
+		}
 	} else {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
 
 	// Sync WhatsApp and iMessage periodically (every 30s, incremental)
+	identityName := app.LocalIdentityName()
+	lastImportErr := map[string]string{}
 	syncLocalPlatforms := func() {
-		wa := &importer.WhatsAppNative{MyName: "Max"}
-		if result, err := wa.ImportFromDB(a.Store); err != nil {
-			logger.Warn().Err(err).Msg("WhatsApp sync failed")
-		} else if result.MessagesImported > 0 {
+		syncPlatform := func(platform, successMsg string, importFromDB func(*db.Store) (*importer.ImportResult, error)) {
+			result, err := importFromDB(a.Store)
+			if err != nil {
+				logSyncError(logger, lastImportErr, platform, err)
+				return
+			}
+			if result.MessagesImported == 0 {
+				return
+			}
+
+			lastImportErr[platform] = ""
 			logger.Info().
 				Int("messages", result.MessagesImported).
 				Int("conversations", result.ConversationsCreated).
-				Msg("WhatsApp sync complete")
+				Msg(successMsg)
 		}
 
-		im := &importer.IMessage{MyName: "Max"}
-		if result, err := im.ImportFromDB(a.Store); err != nil {
-			logger.Warn().Err(err).Msg("iMessage sync failed")
-		} else if result.MessagesImported > 0 {
-			logger.Info().
-				Int("messages", result.MessagesImported).
-				Int("conversations", result.ConversationsCreated).
-				Msg("iMessage sync complete")
-		}
+		syncPlatform("whatsapp", "WhatsApp sync complete", func(store *db.Store) (*importer.ImportResult, error) {
+			return (&importer.WhatsAppNative{MyName: identityName}).ImportFromDB(store)
+		})
+		syncPlatform("imessage", "iMessage sync complete", func(store *db.Store) (*importer.ImportResult, error) {
+			return (&importer.IMessage{MyName: identityName}).ImportFromDB(store)
+		})
 	}
 
 	// Run once immediately, then every 30 seconds
@@ -79,6 +112,12 @@ func RunServe(logger zerolog.Logger) error {
 	if port == "" {
 		port = "7007"
 	}
+	host := os.Getenv("OPENMESSAGES_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	listenAddr := net.JoinHostPort(host, port)
+	baseURL := "http://" + net.JoinHostPort(publicHost(host), port)
 
 	// Create MCP server
 	mcpSrv := mcpserver.NewMCPServer(
@@ -90,28 +129,40 @@ func RunServe(logger zerolog.Logger) error {
 
 	// Create SSE transport for MCP, mounted at /mcp/
 	sseSrv := mcpserver.NewSSEServer(mcpSrv,
-		mcpserver.WithBaseURL(fmt.Sprintf("http://localhost:%s", port)),
+		mcpserver.WithBaseURL(baseURL),
 		mcpserver.WithStaticBasePath("/mcp"),
 	)
 
-	httpHandler := web.APIHandlerWithOptions(a.Store, a.Client, logger, sseSrv, web.APIOptions{
-		IsConnected:    func() bool { return a.Connected.Load() },
-		Unpair:         a.Unpair,
-		OnDeepBackfill: a.DeepBackfill,
-		BackfillStatus: func() any { return a.GetBackfillProgress() },
-		BackfillPhone:  a.BackfillConversationByPhone,
+	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, web.APIOptions{
+		Client:            a.GetClient,
+		IsConnected:       func() bool { return a.Connected.Load() },
+		Unpair:            a.Unpair,
+		StartDeepBackfill: a.StartDeepBackfill,
+		BackfillStatus:    func() any { return a.GetBackfillProgress() },
+		BackfillPhone:     a.BackfillConversationByPhone,
 	})
-	ln, err := net.Listen("tcp", ":"+port)
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return fmt.Errorf("listen on port %s: %w", port, err)
+		return fmt.Errorf("listen on %s: %w", listenAddr, err)
 	}
 	go func() {
-		logger.Info().Str("port", port).Msg("Web UI available at http://localhost:" + port)
-		logger.Info().Str("port", port).Msg("MCP SSE available at http://localhost:" + port + "/mcp/sse")
+		logger.Info().Str("addr", listenAddr).Msg("Web UI available at " + baseURL)
+		logger.Info().Str("addr", listenAddr).Msg("MCP SSE available at " + baseURL + "/mcp/sse")
 		if err := http.Serve(ln, httpHandler); err != nil {
 			logger.Error().Err(err).Msg("HTTP server error")
 		}
 	}()
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		go func() {
+			logger.Info().Msg("Starting MCP stdio transport")
+			if err := mcpserver.ServeStdio(mcpSrv); err != nil {
+				logger.Warn().Err(err).Msg("MCP stdio server exited")
+			}
+		}()
+	} else {
+		logger.Debug().Msg("Skipping MCP stdio transport on interactive terminal")
+	}
 
 	// Block until signal
 	sigCh := make(chan os.Signal, 1)
@@ -135,4 +186,42 @@ func LogLevel() zerolog.Level {
 	default:
 		return zerolog.InfoLevel
 	}
+}
+
+func startupBackfillMode() string {
+	mode := strings.ToLower(os.Getenv("OPENMESSAGES_STARTUP_BACKFILL"))
+	switch mode {
+	case "off", "shallow", "deep":
+		return mode
+	default:
+		return "auto"
+	}
+}
+
+func publicHost(host string) string {
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return "localhost"
+	default:
+		return host
+	}
+}
+
+func logSyncError(logger zerolog.Logger, lastImportErr map[string]string, platform string, err error) {
+	if err == nil {
+		lastImportErr[platform] = ""
+		return
+	}
+	msg := err.Error()
+	if lastImportErr[platform] == msg {
+		return
+	}
+	lastImportErr[platform] = msg
+
+	lowerMsg := strings.ToLower(msg)
+	event := logger.Warn().Err(err).Str("platform", platform)
+	if strings.Contains(lowerMsg, "not found") {
+		event = logger.Debug().Err(err).Str("platform", platform)
+	}
+	event.Msg("Local platform sync unavailable")
 }
