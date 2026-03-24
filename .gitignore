@@ -7,3 +7,6 @@ macos/OpenMessages/.build/
 .vercel
 .env*.local
 .build/
+node_modules/
+playwright-report/
+test-results/

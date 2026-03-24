@@ -113,6 +113,9 @@ The web UI runs at `http://localhost:7007` when the server is started. It provid
 ```bash
 go test ./...        # Run all tests
 go build .           # Build binary
+npm install          # Install Playwright test runner
+npx playwright install chromium
+npm run test:e2e     # Run browser-level web UI tests
 ./openmessage pair  # Pair with phone
 ./openmessage serve # Start server
 ```
