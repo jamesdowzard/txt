@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/maxghenis/openmessage/internal/whatsappmedia"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,6 +37,11 @@ type WhatsAppNative struct {
 	// SinceMS limits import to messages after this Unix millisecond timestamp.
 	// When zero, imports everything.
 	SinceMS int64
+}
+
+type MediaRepairResult struct {
+	MessagesRepaired int
+	MessagesSkipped  int
 }
 
 // ImportFromDB reads the WhatsApp Desktop database and imports all messages.
@@ -127,6 +134,67 @@ func (w *WhatsAppNative) ImportFromDB(store *db.Store) (*ImportResult, error) {
 	return result, nil
 }
 
+func (w *WhatsAppNative) RepairLegacyMediaPlaceholders(store *db.Store) (*MediaRepairResult, error) {
+	dbPath := w.DBPath
+	if dbPath == "" {
+		dbPath = whatsappDefaultDBPath
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return &MediaRepairResult{}, nil
+	}
+
+	placeholders, err := store.ListLegacyWhatsAppMediaPlaceholders(1000)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy whatsapp media placeholders: %w", err)
+	}
+	result := &MediaRepairResult{}
+	if len(placeholders) == 0 {
+		return result, nil
+	}
+
+	waDB, err := sql.Open("sqlite", dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open WhatsApp db: %w", err)
+	}
+	defer waDB.Close()
+	waDB.SetMaxOpenConns(1)
+
+	root := filepath.Join(filepath.Dir(dbPath), "Message")
+	for _, msg := range placeholders {
+		sourceID := strings.TrimSpace(msg.SourceID)
+		if sourceID == "" {
+			result.MessagesSkipped++
+			continue
+		}
+		mediaPath, mimeType, err := w.lookupLegacyMedia(waDB, sourceID, msg.Body)
+		if err != nil || mediaPath == "" {
+			result.MessagesSkipped++
+			continue
+		}
+		fullPath := filepath.Join(root, filepath.FromSlash(mediaPath))
+		if _, err := os.Stat(fullPath); err != nil {
+			result.MessagesSkipped++
+			continue
+		}
+		msg.MediaID = whatsappmedia.EncodeLocalMediaRef(mediaPath)
+		if msg.MediaID == "" {
+			result.MessagesSkipped++
+			continue
+		}
+		if mimeType == "" {
+			mimeType = inferWhatsAppMediaMIME(mediaPath, msg.Body)
+		}
+		msg.MimeType = mimeType
+		if err := store.UpsertMessage(msg); err != nil {
+			result.MessagesSkipped++
+			continue
+		}
+		result.MessagesRepaired++
+	}
+
+	return result, nil
+}
+
 type waChat struct {
 	pk            int
 	jid           string
@@ -143,6 +211,43 @@ type waNativeMessage struct {
 	senderNumber string
 	timestampMS  int64
 	isFromMe     bool
+}
+
+func (w *WhatsAppNative) lookupLegacyMedia(waDB *sql.DB, stanzaID, body string) (string, string, error) {
+	row := waDB.QueryRow(`
+		SELECT COALESCE(mi.ZMEDIALOCALPATH, '')
+		FROM ZWAMESSAGE m
+		LEFT JOIN ZWAMEDIAITEM mi ON mi.Z_PK = m.ZMEDIAITEM
+		WHERE m.ZSTANZAID = ?
+		LIMIT 1
+	`, stanzaID)
+	var mediaPath string
+	if err := row.Scan(&mediaPath); err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(mediaPath), inferWhatsAppMediaMIME(mediaPath, body), nil
+}
+
+func inferWhatsAppMediaMIME(path, body string) string {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(path)))
+	if ext != "" {
+		if mimeType := mime.TypeByExtension(ext); mimeType != "" {
+			return mimeType
+		}
+	}
+	switch strings.TrimSpace(body) {
+	case "[Photo]":
+		return "image/jpeg"
+	case "[Video]":
+		return "video/mp4"
+	case "[Audio]", "[Voice note]":
+		if ext == ".opus" {
+			return "audio/ogg"
+		}
+		return "audio/mpeg"
+	default:
+		return ""
+	}
 }
 
 func (w *WhatsAppNative) loadChats(waDB *sql.DB) ([]waChat, error) {

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,13 +37,74 @@ func main() {
 	}
 
 	events := web.NewEventBroker()
+	var nextID atomic.Int64
+	nextID.Store(time.Now().UnixNano())
+	type mediaBlob struct {
+		data []byte
+		mime string
+	}
+	var mediaStore sync.Map
 	base := web.APIHandlerWithOptions(store, nil, logger, nil, web.APIOptions{
 		Events:      events,
 		IsConnected: func() bool { return true },
+		FetchLinkPreview: func(ctx context.Context, rawURL string) (*web.LinkPreview, error) {
+			switch rawURL {
+			case "https://example.com/story":
+				return &web.LinkPreview{
+					URL:         rawURL,
+					Title:       "Example Story",
+					Description: "A compact social preview for the seeded test link.",
+					SiteName:    "Example",
+					ImageURL:    "https://images.example.com/story.png",
+					Domain:      "example.com",
+				}, nil
+			case "https://openai.com/research":
+				return &web.LinkPreview{
+					URL:         rawURL,
+					Title:       "OpenAI Research",
+					Description: "Updates and papers from the research team.",
+					SiteName:    "OpenAI",
+					ImageURL:    "https://images.example.com/openai-research.png",
+					Domain:      "openai.com",
+				}, nil
+			default:
+				return nil, web.ErrNoLinkPreview
+			}
+		},
+		WhatsAppStatus: func() any {
+			return map[string]any{"connected": true, "paired": true}
+		},
+		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+			messageID := fmt.Sprintf("whatsapp:e2e-media-%d", nextID.Add(1))
+			now := time.Now().UnixMilli()
+			mediaStore.Store(messageID, mediaBlob{
+				data: append([]byte(nil), data...),
+				mime: mime,
+			})
+			return &db.Message{
+				MessageID:      messageID,
+				ConversationID: conversationID,
+				SenderName:     "Me",
+				SenderNumber:   "+15551234567",
+				TimestampMS:    now,
+				Status:         "OUTGOING_COMPLETE",
+				IsFromMe:       true,
+				MediaID:        "wa:e2e-media",
+				MimeType:       mime,
+				DecryptionKey:  "e2e",
+				SourcePlatform: "whatsapp",
+				SourceID:       strings.TrimPrefix(messageID, "whatsapp:"),
+			}, nil
+		},
+		DownloadWhatsAppMedia: func(msg *db.Message) ([]byte, string, error) {
+			raw, ok := mediaStore.Load(msg.MessageID)
+			if !ok {
+				return nil, "", fmt.Errorf("media %s not found", msg.MessageID)
+			}
+			blob := raw.(mediaBlob)
+			return append([]byte(nil), blob.data...), blob.mime, nil
+		},
 	})
-
-	var nextID atomic.Int64
-	nextID.Store(time.Now().UnixNano())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -60,6 +124,7 @@ func main() {
 			SenderName     string `json:"sender_name"`
 			SenderNumber   string `json:"sender_number"`
 			TimestampMS    int64  `json:"timestamp_ms"`
+			Status         string `json:"status"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -72,7 +137,7 @@ func main() {
 		if req.TimestampMS == 0 {
 			req.TimestampMS = time.Now().UnixMilli()
 		}
-		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Body, req.TimestampMS, req.IsFromMe, req.SenderName, req.SenderNumber, nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Body, req.TimestampMS, req.IsFromMe, req.SenderName, req.SenderNumber, req.Status, nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -122,6 +187,29 @@ func main() {
 		})
 	})
 
+	mux.HandleFunc("/_e2e/typing", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+			SenderName     string `json:"sender_name"`
+			SenderNumber   string `json:"sender_number"`
+			Typing         bool   `json:"typing"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ConversationID == "" {
+			http.Error(w, "conversation_id is required", http.StatusBadRequest)
+			return
+		}
+		events.PublishTyping(req.ConversationID, req.SenderName, req.SenderNumber, req.Typing)
+		writeJSON(w, map[string]any{"success": true})
+	})
+
 	mux.HandleFunc("/api/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			base.ServeHTTP(w, r)
@@ -139,7 +227,7 @@ func main() {
 			http.Error(w, "conversation_id and message are required", http.StatusBadRequest)
 			return
 		}
-		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Message, time.Now().UnixMilli(), true, "Me", "+15551234567", nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Message, time.Now().UnixMilli(), true, "Me", "+15551234567", "", nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -179,7 +267,7 @@ func main() {
 			http.Error(w, "draft not found", http.StatusNotFound)
 			return
 		}
-		msg, err := upsertSyntheticMessage(store, draft.ConversationID, req.Body, time.Now().UnixMilli(), true, "Me", "+15551234567", nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, draft.ConversationID, req.Body, time.Now().UnixMilli(), true, "Me", "+15551234567", "", nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -210,6 +298,93 @@ func seedFixture(store *db.Store) error {
 	if err := store.SeedDemo(); err != nil {
 		return err
 	}
+	for _, convoID := range []string{"conv3", "conv5"} {
+		if err := setConversationPlatform(store, convoID, "whatsapp"); err != nil {
+			return err
+		}
+	}
+	if err := seedSyntheticConversation(store, &db.Conversation{
+		ConversationID: "conv9",
+		Name:           "Jordan Rivera",
+		Participants:   `[{"name":"Jordan Rivera","number":"+14155550199"}]`,
+		LastMessageTS:  1738959300000,
+		SourcePlatform: "sms",
+	}, []*db.Message{
+		{
+			MessageID:      "m9a",
+			ConversationID: "conv9",
+			SenderName:     "Jordan Rivera",
+			SenderNumber:   "+14155550199",
+			Body:           "Can you text me the gate code when you get a chance?",
+			TimestampMS:    1738958400000,
+			Status:         "delivered",
+			SourcePlatform: "sms",
+		},
+		{
+			MessageID:      "m9b",
+			ConversationID: "conv9",
+			SenderName:     "Me",
+			SenderNumber:   "+15551234567",
+			Body:           "Yep, I'll send it before you head over.",
+			TimestampMS:    1738959300000,
+			Status:         "delivered",
+			IsFromMe:       true,
+			SourcePlatform: "sms",
+		},
+	}); err != nil {
+		return err
+	}
+	if err := seedSyntheticConversation(store, &db.Conversation{
+		ConversationID: "conv10",
+		Name:           "Jordan Rivera",
+		Participants:   `[{"name":"Jordan Rivera","number":"+14155550199"}]`,
+		LastMessageTS:  1738959900000,
+		UnreadCount:    1,
+		SourcePlatform: "whatsapp",
+	}, []*db.Message{
+		{
+			MessageID:      "m10a",
+			ConversationID: "conv10",
+			SenderName:     "Jordan Rivera",
+			SenderNumber:   "+14155550199",
+			Body:           "Sent the menu here too in case WhatsApp is easier.",
+			TimestampMS:    1738959000000,
+			Status:         "delivered",
+			SourcePlatform: "whatsapp",
+		},
+		{
+			MessageID:      "m10b",
+			ConversationID: "conv10",
+			SenderName:     "Jordan Rivera",
+			SenderNumber:   "+14155550199",
+			Body:           "Also, do you want me to bring dessert?",
+			TimestampMS:    1738959900000,
+			Status:         "delivered",
+			SourcePlatform: "whatsapp",
+		},
+	}); err != nil {
+		return err
+	}
+	if err := seedSyntheticConversation(store, &db.Conversation{
+		ConversationID: "conv11",
+		Name:           "Jordan Rivera",
+		Participants:   `[{"name":"Jordan Rivera","number":"+14155550999"}]`,
+		LastMessageTS:  1738959000000,
+		SourcePlatform: "sms",
+	}, []*db.Message{
+		{
+			MessageID:      "m11a",
+			ConversationID: "conv11",
+			SenderName:     "Jordan Rivera",
+			SenderNumber:   "+14155550999",
+			Body:           "Wrong Jordan, different line.",
+			TimestampMS:    1738959000000,
+			Status:         "delivered",
+			SourcePlatform: "sms",
+		},
+	}); err != nil {
+		return err
+	}
 	if err := store.UpsertConversation(&db.Conversation{
 		ConversationID: pagedConversation,
 		Name:           "Paged Thread",
@@ -237,7 +412,26 @@ func seedFixture(store *db.Store) error {
 	return nil
 }
 
-func upsertSyntheticMessage(store *db.Store, conversationID, body string, timestampMS int64, isFromMe bool, senderName, senderNumber string, id int64) (*db.Message, error) {
+func seedSyntheticConversation(store *db.Store, convo *db.Conversation, msgs []*db.Message) error {
+	if err := store.UpsertConversation(convo); err != nil {
+		return err
+	}
+	for _, msg := range msgs {
+		if err := store.UpsertMessage(msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func upsertSyntheticMessage(store *db.Store, conversationID, body string, timestampMS int64, isFromMe bool, senderName, senderNumber, status string, id int64) (*db.Message, error) {
+	platform := "sms"
+	if conv, err := store.GetConversation(conversationID); err == nil && conv != nil && conv.SourcePlatform != "" {
+		platform = conv.SourcePlatform
+	}
+	if strings.TrimSpace(status) == "" {
+		status = syntheticStatus(isFromMe)
+	}
 	msg := &db.Message{
 		MessageID:      fmt.Sprintf("e2e-%d", id),
 		ConversationID: conversationID,
@@ -245,9 +439,9 @@ func upsertSyntheticMessage(store *db.Store, conversationID, body string, timest
 		SenderNumber:   senderNumber,
 		Body:           body,
 		TimestampMS:    timestampMS,
-		Status:         syntheticStatus(isFromMe),
+		Status:         status,
 		IsFromMe:       isFromMe,
-		SourcePlatform: "sms",
+		SourcePlatform: platform,
 	}
 	if err := store.UpsertMessage(msg); err != nil {
 		return nil, err
@@ -259,7 +453,7 @@ func upsertSyntheticMessage(store *db.Store, conversationID, body string, timest
 			ConversationID: conversationID,
 			Name:           senderName,
 			Participants:   "[]",
-			SourcePlatform: "sms",
+			SourcePlatform: platform,
 		}
 	}
 	conv.LastMessageTS = timestampMS
@@ -272,8 +466,30 @@ func upsertSyntheticMessage(store *db.Store, conversationID, body string, timest
 	return msg, nil
 }
 
+func setConversationPlatform(store *db.Store, conversationID, platform string) error {
+	conv, err := store.GetConversation(conversationID)
+	if err != nil || conv == nil {
+		return err
+	}
+	conv.SourcePlatform = platform
+	if err := store.UpsertConversation(conv); err != nil {
+		return err
+	}
+	msgs, err := store.GetMessagesByConversation(conversationID, 1000)
+	if err != nil {
+		return err
+	}
+	for _, msg := range msgs {
+		msg.SourcePlatform = platform
+		if err := store.UpsertMessage(msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func pagedMessageTimestamp(i int) int64 {
-	base := time.Date(2026, time.March, 1, 9, 0, 0, 0, time.UTC).UnixMilli()
+	base := time.Date(2025, time.February, 5, 8, 0, 0, 0, time.UTC).UnixMilli()
 	return base + int64(i*60_000)
 }
 

@@ -9,9 +9,12 @@ platform :mac do
       scheme: "OpenMessage",
       configuration: "Release",
       export_method: "app-store",
+      xcargs: "DEVELOPMENT_TEAM=8VB5UKQZC6 CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution'",
       export_options: {
-        signingStyle: "automatic",
-        teamID: "8VB5UKQZC6"
+        signingStyle: "manual",
+        teamID: "8VB5UKQZC6",
+        signingCertificate: "Apple Distribution",
+        installerSigningCertificate: "3rd Party Mac Developer Installer"
       }
     )
 

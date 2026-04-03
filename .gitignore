@@ -10,3 +10,6 @@ macos/OpenMessages/.build/
 node_modules/
 playwright-report/
 test-results/
+/OpenMessage.app/
+/OpenMessage.pkg
+*.dSYM.zip

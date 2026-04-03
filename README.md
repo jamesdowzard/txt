@@ -60,6 +60,7 @@ Restart Claude Code. The 7 tools appear automatically.
 
 - **Read messages** — full conversation history, search, media
 - **Send messages** — SMS and RCS, including replies
+- **Live WhatsApp sync** — pair a local WhatsApp companion device from the web UI for live inbound messages, typing indicators, and text replies
 - **React to messages** — emoji reactions on any message
 - **Image/media display** — inline images with fullscreen viewer
 - **Web UI** — real-time conversation view at localhost:7007
@@ -85,6 +86,7 @@ The web UI runs at `http://localhost:7007` when the server is started. It provid
 - Conversation list with search
 - Message view with images, reactions, and reply threads
 - Compose and send messages
+- WhatsApp live-pairing control from the `WA` button in the sidebar
 - React to messages (right-click)
 - Reply to messages (double-click)
 
@@ -98,12 +100,15 @@ The web UI runs at `http://localhost:7007` when the server is started. It provid
 | `OPENMESSAGES_HOST` | `127.0.0.1` | Host/interface to bind the local web server to |
 | `OPENMESSAGES_MY_NAME` | system user name | Display name for outgoing imported iMessage/WhatsApp messages |
 | `OPENMESSAGES_STARTUP_BACKFILL` | `auto` | Startup history sync mode: `auto`, `shallow`, `deep`, or `off` |
+| `OPENMESSAGES_MACOS_NOTIFICATIONS` | interactive macOS `serve` sessions only | Enable/disable native macOS notifications for fresh inbound live messages (`1`/`0`). Click-through opens the matching thread when `terminal-notifier` is available. |
 
 ## Architecture
 
 - **libgm** handles the Google Messages protocol (pairing, encryption, long-polling)
+- **whatsmeow** handles optional live WhatsApp pairing, text sending, and sync through a separate local session store
 - **SQLite** (WAL mode, pure Go) stores messages, conversations, and contacts locally
 - Real-time events from the phone are written to SQLite as they arrive
+- WhatsApp Desktop import remains as a fallback when the live bridge is not active
 - On first run, a deep backfill fetches full SMS/RCS history in the background; later runs do a lighter incremental sync by default
 - MCP tool handlers read from SQLite for queries, call libgm for sends
 - Auth tokens auto-refresh and persist to `session.json`

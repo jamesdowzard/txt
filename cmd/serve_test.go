@@ -47,3 +47,42 @@ func TestHTTPServerSurvivesIndependently(t *testing.T) {
 		t.Fatalf("got %q, want %q", body, "ok")
 	}
 }
+
+func TestMacOSNotificationsEnabled(t *testing.T) {
+	originalGOOS := runtimeGOOS
+	t.Cleanup(func() {
+		runtimeGOOS = originalGOOS
+	})
+
+	t.Run("defaults on for interactive darwin", func(t *testing.T) {
+		runtimeGOOS = func() string { return "darwin" }
+		t.Setenv("OPENMESSAGES_MACOS_NOTIFICATIONS", "")
+		if !macOSNotificationsEnabled(true) {
+			t.Fatal("expected notifications enabled for interactive macOS serve")
+		}
+	})
+
+	t.Run("defaults off for stdio launches", func(t *testing.T) {
+		runtimeGOOS = func() string { return "darwin" }
+		t.Setenv("OPENMESSAGES_MACOS_NOTIFICATIONS", "")
+		if macOSNotificationsEnabled(false) {
+			t.Fatal("expected notifications disabled for non-interactive launch")
+		}
+	})
+
+	t.Run("env can force on outside darwin", func(t *testing.T) {
+		runtimeGOOS = func() string { return "linux" }
+		t.Setenv("OPENMESSAGES_MACOS_NOTIFICATIONS", "true")
+		if !macOSNotificationsEnabled(false) {
+			t.Fatal("expected env override to force notifications on")
+		}
+	})
+
+	t.Run("env can force off on darwin", func(t *testing.T) {
+		runtimeGOOS = func() string { return "darwin" }
+		t.Setenv("OPENMESSAGES_MACOS_NOTIFICATIONS", "0")
+		if macOSNotificationsEnabled(true) {
+			t.Fatal("expected env override to disable notifications")
+		}
+	})
+}

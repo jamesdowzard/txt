@@ -28,6 +28,28 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		7C9A4B132FEA100100B4A001 /* Build Go Backend */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Go Backend";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/openmessage",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"\nROOT_DIR=\"${PROJECT_DIR}/..\"\nBUILD_DIR=\"${DERIVED_FILE_DIR}/openmessage-backend\"\nOUTPUT_PATH=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/openmessage\"\nmkdir -p \"$BUILD_DIR\" \"$(dirname \"$OUTPUT_PATH\")\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-arm64\" \"$ROOT_DIR\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-amd64\" \"$ROOT_DIR\"\nlipo -create -output \"$OUTPUT_PATH\" \"$BUILD_DIR/openmessage-arm64\" \"$BUILD_DIR/openmessage-amd64\"\nchmod +x \"$OUTPUT_PATH\"\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" = \"YES\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  if [ -n \"${CODE_SIGN_ENTITLEMENTS:-}\" ]; then\n    ENTITLEMENTS_PATH=\"${PROJECT_DIR}/${CODE_SIGN_ENTITLEMENTS}\"\n    if [ -f \"$ENTITLEMENTS_PATH\" ]; then\n      codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --entitlements \"$ENTITLEMENTS_PATH\" \"$OUTPUT_PATH\"\n    else\n      codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$OUTPUT_PATH\"\n    fi\n  else\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$OUTPUT_PATH\"\n  fi\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXGroup section */
 		3A7B70852F3A468800520F5B = {
 			isa = PBXGroup;
@@ -53,6 +75,7 @@
 			buildConfigurationList = 3A7B70992F3A468A00520F5B /* Build configuration list for PBXNativeTarget "OpenMessage" */;
 			buildPhases = (
 				3A7B708A2F3A468800520F5B /* Sources */,
+				7C9A4B132FEA100100B4A001 /* Build Go Backend */,
 				3A7B708B2F3A468800520F5B /* Frameworks */,
 				3A7B708C2F3A468800520F5B /* Resources */,
 			);
@@ -248,20 +271,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ../macos/OpenMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.openmessage.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -279,20 +305,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ../macos/OpenMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.openmessage.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

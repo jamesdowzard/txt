@@ -2,9 +2,14 @@ package web
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +20,7 @@ import (
 	"github.com/maxghenis/openmessage/internal/app"
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/maxghenis/openmessage/internal/whatsapplive"
 )
 
 type testServer struct {
@@ -262,9 +268,66 @@ func TestGetMessagesWithPagingParams(t *testing.T) {
 	}
 }
 
+func TestGetMessagesWithPagingIDsAtDuplicateTimestampBoundary(t *testing.T) {
+	ts := newTestServer(t)
+
+	ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1", Name: "Alice", LastMessageTS: 300,
+	})
+	for _, msg := range []db.Message{
+		{MessageID: "m1", ConversationID: "c1", Body: "1", TimestampMS: 100},
+		{MessageID: "m2", ConversationID: "c1", Body: "2", TimestampMS: 200},
+		{MessageID: "m3", ConversationID: "c1", Body: "3", TimestampMS: 200},
+		{MessageID: "m4", ConversationID: "c1", Body: "4", TimestampMS: 300},
+	} {
+		ts.store.UpsertMessage(&msg)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/conversations/c1/messages?before=200&before_id=m3&limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var before []db.Message
+	if err := json.NewDecoder(resp.Body).Decode(&before); err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("before query got %d messages, want 2", len(before))
+	}
+	if before[0].MessageID != "m2" || before[1].MessageID != "m1" {
+		t.Fatalf("before query IDs = [%s %s], want [m2 m1]", before[0].MessageID, before[1].MessageID)
+	}
+
+	resp2, err := http.Get(ts.server.URL + "/api/conversations/c1/messages?after=200&after_id=m2&limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var after []db.Message
+	if err := json.NewDecoder(resp2.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("after query got %d messages, want 2", len(after))
+	}
+	if after[0].MessageID != "m3" || after[1].MessageID != "m4" {
+		t.Fatalf("after query IDs = [%s %s], want [m3 m4]", after[0].MessageID, after[1].MessageID)
+	}
+}
+
 func TestSearchMessages(t *testing.T) {
 	ts := newTestServer(t)
 
+	ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "Nathan",
+		Participants:   `[{"name":"Nathan","number":"+12675550100"}]`,
+		LastMessageTS:  200,
+		SourcePlatform: "sms",
+	})
 	ts.store.UpsertMessage(&db.Message{
 		MessageID: "m1", ConversationID: "c1", Body: "lunch tomorrow?",
 		TimestampMS: 100,
@@ -284,15 +347,70 @@ func TestSearchMessages(t *testing.T) {
 		t.Fatalf("got status %d, want 200", resp.StatusCode)
 	}
 
-	var msgs []db.Message
-	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+	var results []SearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 {
-		t.Fatalf("got %d messages, want 1", len(msgs))
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if msgs[0].Body != "lunch tomorrow?" {
-		t.Fatalf("got body %q, want %q", msgs[0].Body, "lunch tomorrow?")
+	if results[0].Preview != "lunch tomorrow?" {
+		t.Fatalf("got preview %q, want %q", results[0].Preview, "lunch tomorrow?")
+	}
+	if results[0].Name != "Nathan" {
+		t.Fatalf("got name %q, want Nathan", results[0].Name)
+	}
+}
+
+func TestSearchIncludesConversationMetadataMatches(t *testing.T) {
+	ts := newTestServer(t)
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "+1 (267) 555-0100",
+		Participants:   `[{"name":"","number":"+12675550100"}]`,
+		LastMessageTS:  100,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.store.UpsertMessage(&db.Message{
+		MessageID:      "m1",
+		ConversationID: "c1",
+		SenderName:     "Nathan",
+		SenderNumber:   "+12675550100",
+		Body:           "See you soon",
+		TimestampMS:    100,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.store.UpsertContact(&db.Contact{
+		ContactID: "contact-1",
+		Name:      "Nathan",
+		Number:    "+12675550100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/search?q=Nathan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var results []SearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ConversationID != "c1" {
+		t.Fatalf("got conversation %q, want c1", results[0].ConversationID)
+	}
+	if results[0].Preview != "See you soon" {
+		t.Fatalf("got preview %q, want %q", results[0].Preview, "See you soon")
 	}
 }
 
@@ -324,6 +442,211 @@ func TestSendMessage(t *testing.T) {
 
 	if resp.StatusCode != 503 {
 		t.Fatalf("got status %d, want 503 (no client)", resp.StatusCode)
+	}
+}
+
+func TestSendMessageUsesWhatsAppSender(t *testing.T) {
+	var gotConversationID, gotBody, gotReplyToID string
+	ts := newTestServerWithOptions(t, APIOptions{
+		SendWhatsAppText: func(conversationID, body, replyToID string) (*db.Message, error) {
+			gotConversationID = conversationID
+			gotBody = body
+			gotReplyToID = replyToID
+			return &db.Message{
+				MessageID:      "whatsapp:sent-1",
+				ConversationID: conversationID,
+				Body:           body,
+				IsFromMe:       true,
+				TimestampMS:    1234,
+				Status:         "OUTGOING_SENDING",
+				ReplyToID:      replyToID,
+				SourcePlatform: "whatsapp",
+				SourceID:       "sent-1",
+			}, nil
+		},
+	})
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		Name:           "Jordan Rivera",
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"conversation_id":"whatsapp:15551234567@s.whatsapp.net","message":"hello wa","reply_to_id":"whatsapp:reply-1"}`
+	resp, err := http.Post(ts.server.URL+"/api/send", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if gotConversationID != "whatsapp:15551234567@s.whatsapp.net" || gotBody != "hello wa" || gotReplyToID != "whatsapp:reply-1" {
+		t.Fatalf("unexpected callback args: conv=%q body=%q reply=%q", gotConversationID, gotBody, gotReplyToID)
+	}
+	msgs, err := ts.store.GetMessagesByConversation("whatsapp:15551234567@s.whatsapp.net", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d stored messages, want 1", len(msgs))
+	}
+	if msgs[0].SourcePlatform != "whatsapp" {
+		t.Fatalf("source platform = %q, want whatsapp", msgs[0].SourcePlatform)
+	}
+	if msgs[0].ReplyToID != "whatsapp:reply-1" {
+		t.Fatalf("reply_to_id = %q, want whatsapp:reply-1", msgs[0].ReplyToID)
+	}
+}
+
+func TestSendDraftUsesWhatsAppSender(t *testing.T) {
+	var calls int
+	ts := newTestServerWithOptions(t, APIOptions{
+		SendWhatsAppText: func(conversationID, body, replyToID string) (*db.Message, error) {
+			calls++
+			return &db.Message{
+				MessageID:      "whatsapp:draft-1",
+				ConversationID: conversationID,
+				Body:           body,
+				IsFromMe:       true,
+				TimestampMS:    4321,
+				Status:         "OUTGOING_SENDING",
+				SourcePlatform: "whatsapp",
+				SourceID:       "draft-1",
+			}, nil
+		},
+	})
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		Name:           "Jordan Rivera",
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.store.UpsertDraft(&db.Draft{
+		DraftID:        "d1",
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		Body:           "draft text",
+		CreatedAt:      1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"draft_id":"d1","body":"send this draft"}`
+	resp, err := http.Post(ts.server.URL+"/api/drafts/send", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if calls != 1 {
+		t.Fatalf("SendWhatsAppText calls = %d, want 1", calls)
+	}
+	if draft, err := ts.store.GetDraft("d1"); err != nil {
+		t.Fatal(err)
+	} else if draft != nil {
+		t.Fatal("draft was not deleted after WhatsApp send")
+	}
+}
+
+func TestSendMediaUsesWhatsAppSender(t *testing.T) {
+	var gotConversationID, gotFilename, gotMIME string
+	var gotData []byte
+	ts := newTestServerWithOptions(t, APIOptions{
+		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+			gotConversationID = conversationID
+			gotFilename = filename
+			gotMIME = mime
+			gotData = append([]byte(nil), data...)
+			return &db.Message{
+				MessageID:      "whatsapp:media-1",
+				ConversationID: conversationID,
+				IsFromMe:       true,
+				TimestampMS:    1234,
+				Status:         "OUTGOING_SENDING",
+				MediaID:        "wa:test-ref",
+				MimeType:       mime,
+				DecryptionKey:  "deadbeef",
+				SourcePlatform: "whatsapp",
+				SourceID:       "media-1",
+			}, nil
+		},
+	})
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		Name:           "Jordan Rivera",
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("conversation_id", "whatsapp:15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "photo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("png-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, ts.server.URL+"/api/send-media", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("got status %d, want 200: %s", resp.StatusCode, string(raw))
+	}
+	if gotConversationID != "whatsapp:15551234567@s.whatsapp.net" {
+		t.Fatalf("conversation_id = %q, want whatsapp:15551234567@s.whatsapp.net", gotConversationID)
+	}
+	if gotFilename != "photo.png" {
+		t.Fatalf("filename = %q, want photo.png", gotFilename)
+	}
+	if gotMIME != "application/octet-stream" {
+		t.Fatalf("mime = %q, want application/octet-stream", gotMIME)
+	}
+	if string(gotData) != "png-bytes" {
+		t.Fatalf("data = %q, want png-bytes", string(gotData))
+	}
+
+	msgs, err := ts.store.GetMessagesByConversation("whatsapp:15551234567@s.whatsapp.net", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d stored messages, want 1", len(msgs))
+	}
+	if msgs[0].SourcePlatform != "whatsapp" {
+		t.Fatalf("source platform = %q, want whatsapp", msgs[0].SourcePlatform)
+	}
+	if msgs[0].MediaID != "wa:test-ref" {
+		t.Fatalf("media_id = %q, want wa:test-ref", msgs[0].MediaID)
+	}
+	if msgs[0].MimeType != "application/octet-stream" {
+		t.Fatalf("mime_type = %q, want application/octet-stream", msgs[0].MimeType)
 	}
 }
 
@@ -414,6 +737,261 @@ func TestGetStatus(t *testing.T) {
 	}
 }
 
+func TestGetStatusIncludesWhatsAppSnapshot(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		WhatsAppStatus: func() any {
+			return map[string]any{
+				"connected": true,
+				"paired":    true,
+				"push_name": "Max",
+			}
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var status map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	wa, ok := status["whatsapp"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected whatsapp status object, got %#v", status["whatsapp"])
+	}
+	if wa["connected"] != true || wa["paired"] != true {
+		t.Fatalf("unexpected whatsapp payload: %#v", wa)
+	}
+}
+
+func TestGetStatusIncludesGoogleSnapshot(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		GoogleStatus: func() any {
+			return map[string]any{
+				"connected": false,
+				"paired":    true,
+				"last_error": "Disconnected from Google Messages",
+			}
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var status map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	google, ok := status["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected google status object, got %#v", status["google"])
+	}
+	if google["paired"] != true {
+		t.Fatalf("unexpected google payload: %#v", google)
+	}
+}
+
+func TestDiagnosticsEndpointIncludesCountsAndStatus(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		GoogleStatus: func() any {
+			return map[string]any{"connected": true, "paired": true}
+		},
+		WhatsAppStatus: func() any {
+			return map[string]any{"connected": false, "paired": true}
+		},
+		BackfillStatus: func() any {
+			return map[string]any{"running": true, "phase": "messages"}
+		},
+	})
+
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "sms-1",
+		Name:           "Alice",
+		LastMessageTS:  100,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.store.UpsertMessage(&db.Message{
+		MessageID:      "m1",
+		ConversationID: "sms-1",
+		Body:           "hello",
+		TimestampMS:    100,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/diagnostics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["conversation_count"] != float64(1) {
+		t.Fatalf("conversation_count = %v, want 1", payload["conversation_count"])
+	}
+	if payload["message_count"] != float64(1) {
+		t.Fatalf("message_count = %v, want 1", payload["message_count"])
+	}
+	if _, ok := payload["google"].(map[string]any); !ok {
+		t.Fatalf("expected google status in diagnostics, got %#v", payload["google"])
+	}
+}
+
+func TestGoogleReconnectRoute(t *testing.T) {
+	called := false
+	ts := newTestServerWithOptions(t, APIOptions{
+		ReconnectGoogle: func() error {
+			called = true
+			return nil
+		},
+		GoogleStatus: func() any {
+			return map[string]any{"connected": true, "paired": true}
+		},
+	})
+
+	resp, err := http.Post(ts.server.URL+"/api/google/reconnect", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if !called {
+		t.Fatal("expected reconnect callback to be called")
+	}
+}
+
+func TestWhatsAppConnectRoute(t *testing.T) {
+	called := false
+	ts := newTestServerWithOptions(t, APIOptions{
+		ConnectWhatsApp: func() error {
+			called = true
+			return nil
+		},
+		WhatsAppStatus: func() any {
+			return map[string]any{
+				"pairing":      true,
+				"qr_available": true,
+			}
+		},
+	})
+
+	resp, err := http.Post(ts.server.URL+"/api/whatsapp/connect", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if !called {
+		t.Fatal("expected connect callback to be called")
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["pairing"] != true || payload["qr_available"] != true {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestWhatsAppQRCodeRoute(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		WhatsAppQRCode: func() (any, error) {
+			return map[string]any{
+				"event":        "code",
+				"png_data_url": "data:image/png;base64,abc",
+			}, nil
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/whatsapp/qr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["event"] != "code" {
+		t.Fatalf("expected event=code, got %#v", payload["event"])
+	}
+}
+
+func TestWhatsAppAvatarRoute(t *testing.T) {
+	calledWith := ""
+	ts := newTestServerWithOptions(t, APIOptions{
+		WhatsAppAvatar: func(conversationID string) ([]byte, string, error) {
+			calledWith = conversationID
+			return []byte("avatar-bytes"), "image/png", nil
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/whatsapp/avatar?conversation_id=" + url.QueryEscape("whatsapp:15551234567@s.whatsapp.net"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "image/png" {
+		t.Fatalf("content-type = %q, want image/png", got)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "avatar-bytes" {
+		t.Fatalf("body = %q, want avatar-bytes", string(body))
+	}
+	if calledWith != "whatsapp:15551234567@s.whatsapp.net" {
+		t.Fatalf("conversation_id = %q", calledWith)
+	}
+}
+
+func TestWhatsAppAvatarRouteReturns404WhenMissing(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		WhatsAppAvatar: func(conversationID string) ([]byte, string, error) {
+			return nil, "", whatsapplive.ErrProfilePhotoNotFound
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/whatsapp/avatar?conversation_id=" + url.QueryEscape("whatsapp:15551234567@s.whatsapp.net"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Fatalf("got status %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestGetMediaReturns404WhenNoMedia(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -467,6 +1045,50 @@ func TestGetMediaReturns503WhenNoClient(t *testing.T) {
 
 	if resp.StatusCode != 503 {
 		t.Fatalf("got status %d, want 503 when client is nil", resp.StatusCode)
+	}
+}
+
+func TestGetMediaUsesWhatsAppDownloader(t *testing.T) {
+	var gotMessageID string
+	ts := newTestServerWithOptions(t, APIOptions{
+		DownloadWhatsAppMedia: func(msg *db.Message) ([]byte, string, error) {
+			gotMessageID = msg.MessageID
+			return []byte("png-data"), "image/png", nil
+		},
+	})
+
+	if err := ts.store.UpsertMessage(&db.Message{
+		MessageID:      "whatsapp:m1",
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		MediaID:        "wa:test-ref",
+		MimeType:       "image/png",
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(ts.server.URL + "/api/media/whatsapp:m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("got status %d, want 200: %s", resp.StatusCode, string(raw))
+	}
+	if gotMessageID != "whatsapp:m1" {
+		t.Fatalf("message id = %q, want whatsapp:m1", gotMessageID)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("content-type = %q, want image/png", ct)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "png-data" {
+		t.Fatalf("body = %q, want png-data", string(data))
 	}
 }
 
@@ -804,6 +1426,59 @@ func TestStaticFileServing(t *testing.T) {
 	}
 }
 
+func TestLinkPreviewEndpoint(t *testing.T) {
+	ts := newTestServerWithOptions(t, APIOptions{
+		FetchLinkPreview: func(ctx context.Context, rawURL string) (*LinkPreview, error) {
+			if rawURL != "https://example.com/story" {
+				t.Fatalf("unexpected preview URL %q", rawURL)
+			}
+			return &LinkPreview{
+				URL:         rawURL,
+				Title:       "Example Story",
+				Description: "A short preview description.",
+				SiteName:    "Example",
+				ImageURL:    "https://cdn.example.com/story.png",
+				Domain:      "example.com",
+			}, nil
+		},
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/link-preview?url=https%3A%2F%2Fexample.com%2Fstory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("got status %d, want 200", resp.StatusCode)
+	}
+
+	var preview LinkPreview
+	if err := json.NewDecoder(resp.Body).Decode(&preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Title != "Example Story" {
+		t.Fatalf("got title %q", preview.Title)
+	}
+	if preview.ImageURL != "https://cdn.example.com/story.png" {
+		t.Fatalf("got image %q", preview.ImageURL)
+	}
+}
+
+func TestLinkPreviewEndpointRequiresURL(t *testing.T) {
+	ts := newTestServer(t)
+
+	resp, err := http.Get(ts.server.URL + "/api/link-preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 400 {
+		t.Fatalf("got status %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestBackfillStatusDefault(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -1070,6 +1745,75 @@ func TestEventsStreamPublishesStatusAndMessages(t *testing.T) {
 	}
 	if msg.ConversationID != "c1" {
 		t.Fatalf("messages event conversation_id = %q, want c1", msg.ConversationID)
+	}
+}
+
+func TestEventsStreamPublishesTyping(t *testing.T) {
+	events := NewEventBroker()
+	ts := newTestServerWithOptions(t, APIOptions{
+		Events:      events,
+		IsConnected: func() bool { return true },
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	_ = readSSEEvent(t, reader) // initial status event
+
+	events.PublishTyping("c1", "Alice", "+15551234567", true)
+
+	typingEvt := readSSEEvent(t, reader)
+	if typingEvt.Event != EventTypeTyping {
+		t.Fatalf("stream event = %q, want %q", typingEvt.Event, EventTypeTyping)
+	}
+
+	var typing StreamEvent
+	if err := json.Unmarshal([]byte(typingEvt.Data), &typing); err != nil {
+		t.Fatal(err)
+	}
+	if typing.ConversationID != "c1" {
+		t.Fatalf("typing conversation_id = %q, want c1", typing.ConversationID)
+	}
+	if typing.SenderName != "Alice" {
+		t.Fatalf("typing sender_name = %q, want Alice", typing.SenderName)
+	}
+	if typing.Typing == nil || !*typing.Typing {
+		t.Fatalf("typing event = %+v, want typing=true", typing)
+	}
+}
+
+func TestEventsStreamPublishesHeartbeat(t *testing.T) {
+	events := NewEventBroker()
+	ts := newTestServerWithOptions(t, APIOptions{
+		Events:         events,
+		IsConnected:    func() bool { return true },
+		EventHeartbeat: 20 * time.Millisecond,
+	})
+
+	resp, err := http.Get(ts.server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	_ = readSSEEvent(t, reader) // initial status event
+
+	heartbeatEvt := readSSEEvent(t, reader)
+	if heartbeatEvt.Event != EventTypeHeartbeat {
+		t.Fatalf("stream event = %q, want %q", heartbeatEvt.Event, EventTypeHeartbeat)
+	}
+
+	var heartbeat StreamEvent
+	if err := json.Unmarshal([]byte(heartbeatEvt.Data), &heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	if heartbeat.Timestamp <= 0 {
+		t.Fatalf("heartbeat timestamp = %d, want > 0", heartbeat.Timestamp)
 	}
 }
 

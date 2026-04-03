@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -12,6 +13,8 @@ import (
 
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/maxghenis/openmessage/internal/importer"
+	"github.com/maxghenis/openmessage/internal/whatsapplive"
 )
 
 // BackfillPhase represents the current phase of a deep backfill.
@@ -100,23 +103,38 @@ func (p *BackfillProgress) snapshot() BackfillProgress {
 }
 
 type App struct {
-	clientMu              sync.RWMutex
-	Client                *client.Client
-	Store                 *db.Store
-	EventHandler          *client.EventHandler
-	Logger                zerolog.Logger
-	DataDir               string
-	SessionPath           string
-	Connected             atomic.Bool
-	OnConversationsChange func()
-	OnMessagesChange      func(string)
-	OnStatusChange        func(bool)
+	clientMu               sync.RWMutex
+	Client                 *client.Client
+	Store                  *db.Store
+	EventHandler           *client.EventHandler
+	Logger                 zerolog.Logger
+	DataDir                string
+	SessionPath            string
+	WhatsAppSessionPath    string
+	Connected              atomic.Bool
+	OnConversationsChange  func()
+	OnIncomingMessage      func(*db.Message)
+	OnMessagesChange       func(string)
+	OnStatusChange         func(bool)
+	OnTypingChange         func(conversationID, senderName, senderNumber string, typing bool)
+	OnWhatsAppStatusChange func()
 
 	// gmClient is used by backfill methods. If nil, it's derived from Client.GM.
 	// Set this field directly in tests to inject a mock.
-	gmClient            GMClient
-	BackfillProgress    BackfillProgress
-	deepBackfillRunning atomic.Bool
+	gmClient         GMClient
+	BackfillProgress BackfillProgress
+	backfillRunning  atomic.Bool
+	reconcileRunning atomic.Bool
+	whatsAppMu       sync.Mutex
+	WhatsApp         *whatsapplive.Bridge
+	statusMu         sync.Mutex
+	googleLastError  string
+}
+
+type GoogleStatusSnapshot struct {
+	Connected bool   `json:"connected"`
+	Paired    bool   `json:"paired"`
+	LastError string `json:"last_error,omitempty"`
 }
 
 func DefaultDataDir() string {
@@ -147,6 +165,28 @@ func New(logger zerolog.Logger) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	if report, err := store.RepairLegacyArtifacts(); err != nil {
+		logger.Warn().Err(err).Msg("Failed to repair legacy message artifacts")
+	} else {
+		if report.DeletedWhatsAppReactionPlaceholders > 0 {
+			logger.Info().
+				Int("deleted", report.DeletedWhatsAppReactionPlaceholders).
+				Msg("Removed legacy WhatsApp reaction placeholder rows")
+		}
+		if report.RemainingWhatsAppMediaPlaceholders > 0 {
+			logger.Info().
+				Int("count", report.RemainingWhatsAppMediaPlaceholders).
+				Msg("Legacy WhatsApp media placeholders remain without downloadable metadata")
+		}
+	}
+	if mediaRepair, err := (&importer.WhatsAppNative{}).RepairLegacyMediaPlaceholders(store); err != nil {
+		logger.Warn().Err(err).Msg("Failed to repair legacy WhatsApp media placeholders")
+	} else if mediaRepair.MessagesRepaired > 0 {
+		logger.Info().
+			Int("repaired", mediaRepair.MessagesRepaired).
+			Int("skipped", mediaRepair.MessagesSkipped).
+			Msg("Repaired legacy WhatsApp media placeholders from local desktop store")
+	}
 
 	// Seed demo data
 	if os.Getenv("OPENMESSAGES_DEMO") != "" {
@@ -158,12 +198,14 @@ func New(logger zerolog.Logger) (*App, error) {
 	}
 
 	sessionPath := filepath.Join(dataDir, "session.json")
+	whatsAppSessionPath := filepath.Join(dataDir, "whatsapp-session.db")
 
 	app := &App{
-		Store:       store,
-		Logger:      logger,
-		DataDir:     dataDir,
-		SessionPath: sessionPath,
+		Store:               store,
+		Logger:              logger,
+		DataDir:             dataDir,
+		SessionPath:         sessionPath,
+		WhatsAppSessionPath: whatsAppSessionPath,
 	}
 	return app, nil
 }
@@ -198,11 +240,13 @@ func (a *App) setClient(cli *client.Client) {
 func (a *App) LoadAndConnect() error {
 	sessionData, err := client.LoadSession(a.SessionPath)
 	if err != nil {
+		a.setGoogleLastError(err.Error())
 		return fmt.Errorf("load session (run 'gmessages-mcp pair' first): %w", err)
 	}
 
 	cli, err := client.NewFromSession(sessionData, a.Logger)
 	if err != nil {
+		a.setGoogleLastError(err.Error())
 		return fmt.Errorf("create client: %w", err)
 	}
 	a.setClient(cli)
@@ -215,12 +259,18 @@ func (a *App) LoadAndConnect() error {
 		OnConversationsChange: func() {
 			a.emitConversationsChange()
 		},
+		OnIncomingMessage: a.OnIncomingMessage,
 		OnMessagesChange: func(conversationID string) {
 			a.emitMessagesChange(conversationID)
+		},
+		OnTypingChange: a.OnTypingChange,
+		OnRealtimeGapRecovered: func(reason string) {
+			a.StartRecentReconcile(reason)
 		},
 		OnDisconnect: func() {
 			a.Connected.Store(false)
 			a.setClient(nil)
+			a.setGoogleLastError("Disconnected from Google Messages")
 			a.emitStatusChange(false)
 			a.Logger.Warn().Msg("Disconnected from Google Messages")
 		},
@@ -228,9 +278,11 @@ func (a *App) LoadAndConnect() error {
 	cli.GM.SetEventHandler(a.EventHandler.Handle)
 
 	if err := cli.GM.Connect(); err != nil {
+		a.setGoogleLastError(err.Error())
 		return fmt.Errorf("connect: %w", err)
 	}
 	a.Connected.Store(true)
+	a.setGoogleLastError("")
 	a.emitStatusChange(true)
 	a.Logger.Info().Msg("Connected to Google Messages")
 	return nil
@@ -239,6 +291,7 @@ func (a *App) LoadAndConnect() error {
 // Unpair deletes the session file so the app can re-pair.
 func (a *App) Unpair() error {
 	a.Connected.Store(false)
+	a.setGoogleLastError("")
 	a.emitStatusChange(false)
 	if cli := a.GetClient(); cli != nil {
 		cli.GM.Disconnect()
@@ -263,12 +316,85 @@ func (a *App) getGMClient() GMClient {
 	return nil
 }
 
+func (a *App) currentBackfillClient() (GMClient, any) {
+	if a.gmClient != nil {
+		return a.gmClient, a.gmClient
+	}
+	if cli := a.GetClient(); cli != nil {
+		return newRealGMClient(cli.GM), cli.GM
+	}
+	return nil, nil
+}
+
+func (a *App) backfillClientStillCurrent(token any) bool {
+	if token == nil {
+		return false
+	}
+	if a.gmClient != nil {
+		return a.gmClient == token
+	}
+	if cli := a.GetClient(); cli != nil {
+		return cli.GM == token
+	}
+	return false
+}
+
 func (a *App) StartDeepBackfill() bool {
-	if !a.deepBackfillRunning.CompareAndSwap(false, true) {
+	if !a.beginBackfill() {
 		return false
 	}
 	go a.deepBackfill()
 	return true
+}
+
+func (a *App) StartRecentReconcile(reason string) bool {
+	if a.backfillRunning.Load() || !a.reconcileRunning.CompareAndSwap(false, true) {
+		return false
+	}
+	go a.reconcileRecentConversations(reason)
+	return true
+}
+
+func (a *App) GooglePaired() bool {
+	_, err := os.Stat(a.SessionPath)
+	return err == nil
+}
+
+func (a *App) GoogleStatus() GoogleStatusSnapshot {
+	a.statusMu.Lock()
+	lastError := a.googleLastError
+	a.statusMu.Unlock()
+	return GoogleStatusSnapshot{
+		Connected: a.Connected.Load(),
+		Paired:    a.GooglePaired(),
+		LastError: lastError,
+	}
+}
+
+func (a *App) ReconnectGoogleMessages() error {
+	if a.Connected.Load() && a.GetClient() != nil {
+		a.setGoogleLastError("")
+		return nil
+	}
+	if cli := a.GetClient(); cli != nil {
+		cli.GM.Disconnect()
+		a.setClient(nil)
+	}
+	return a.LoadAndConnect()
+}
+
+func (a *App) setGoogleLastError(message string) {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	a.googleLastError = strings.TrimSpace(message)
+}
+
+func (a *App) beginBackfill() bool {
+	return a.backfillRunning.CompareAndSwap(false, true)
+}
+
+func (a *App) endBackfill() {
+	a.backfillRunning.Store(false)
 }
 
 func (a *App) emitConversationsChange() {
@@ -290,7 +416,7 @@ func (a *App) emitStatusChange(connected bool) {
 }
 
 func (a *App) IsDeepBackfillRunning() bool {
-	return a.deepBackfillRunning.Load()
+	return a.backfillRunning.Load()
 }
 
 // GetBackfillProgress returns a snapshot of the current backfill progress.
@@ -301,6 +427,11 @@ func (a *App) GetBackfillProgress() BackfillProgress {
 func (a *App) Close() {
 	if cli := a.GetClient(); cli != nil {
 		cli.GM.Disconnect()
+	}
+	if wa := a.GetWhatsApp(); wa != nil {
+		if err := wa.Close(); err != nil {
+			a.Logger.Warn().Err(err).Msg("Failed to close WhatsApp bridge")
+		}
 	}
 	if a.Store != nil {
 		a.Store.Close()

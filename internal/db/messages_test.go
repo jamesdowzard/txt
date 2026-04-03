@@ -571,7 +571,7 @@ func TestGetMessagesByConversationPaging(t *testing.T) {
 		}
 	}
 
-	before, err := store.GetMessagesByConversationBefore("c1", 400, 2)
+	before, err := store.GetMessagesByConversationBefore("c1", 400, "m4", 2)
 	if err != nil {
 		t.Fatalf("before query: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestGetMessagesByConversationPaging(t *testing.T) {
 		t.Fatalf("before ordering: got [%d %d], want [300 200]", before[0].TimestampMS, before[1].TimestampMS)
 	}
 
-	after, err := store.GetMessagesByConversationAfter("c1", 200, 2)
+	after, err := store.GetMessagesByConversationAfter("c1", 200, "m2", 2)
 	if err != nil {
 		t.Fatalf("after query: %v", err)
 	}
@@ -591,6 +591,99 @@ func TestGetMessagesByConversationPaging(t *testing.T) {
 	}
 	if after[0].TimestampMS != 300 || after[1].TimestampMS != 400 {
 		t.Fatalf("after ordering: got [%d %d], want [300 400]", after[0].TimestampMS, after[1].TimestampMS)
+	}
+}
+
+func TestGetMessagesByConversationPagingWithDuplicateTimestamps(t *testing.T) {
+	store := newTestStore(t)
+
+	for _, msg := range []*Message{
+		{MessageID: "m1", ConversationID: "c1", Body: "msg 1", TimestampMS: 100},
+		{MessageID: "m2", ConversationID: "c1", Body: "msg 2", TimestampMS: 200},
+		{MessageID: "m3", ConversationID: "c1", Body: "msg 3", TimestampMS: 200},
+		{MessageID: "m4", ConversationID: "c1", Body: "msg 4", TimestampMS: 300},
+	} {
+		if err := store.UpsertMessage(msg); err != nil {
+			t.Fatalf("seed message %s: %v", msg.MessageID, err)
+		}
+	}
+
+	before, err := store.GetMessagesByConversationBefore("c1", 200, "m3", 10)
+	if err != nil {
+		t.Fatalf("before query: %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("before count: got %d, want 2", len(before))
+	}
+	if before[0].MessageID != "m2" || before[1].MessageID != "m1" {
+		t.Fatalf("before boundary = [%s %s], want [m2 m1]", before[0].MessageID, before[1].MessageID)
+	}
+
+	after, err := store.GetMessagesByConversationAfter("c1", 200, "m2", 10)
+	if err != nil {
+		t.Fatalf("after query: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("after count: got %d, want 2", len(after))
+	}
+	if after[0].MessageID != "m3" || after[1].MessageID != "m4" {
+		t.Fatalf("after boundary = [%s %s], want [m3 m4]", after[0].MessageID, after[1].MessageID)
+	}
+}
+
+func TestRecordOutgoingMessageDeletesDraftAtomically(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "c1",
+		Name:           "Alice",
+		LastMessageTS:  100,
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if err := store.UpsertDraft(&Draft{
+		DraftID:        "d1",
+		ConversationID: "c1",
+		Body:           "Draft body",
+		CreatedAt:      200,
+	}); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+
+	msg := &Message{
+		MessageID:      "m-outgoing",
+		ConversationID: "c1",
+		Body:           "Sent body",
+		IsFromMe:       true,
+		TimestampMS:    999,
+		Status:         "OUTGOING_SENDING",
+	}
+	if err := store.RecordOutgoingMessage(msg, "d1"); err != nil {
+		t.Fatalf("record outgoing message: %v", err)
+	}
+
+	got, err := store.GetMessageByID("m-outgoing")
+	if err != nil {
+		t.Fatalf("get outgoing message: %v", err)
+	}
+	if got == nil || got.Body != "Sent body" {
+		t.Fatalf("stored outgoing message = %#v, want body %q", got, "Sent body")
+	}
+
+	draft, err := store.GetDraft("d1")
+	if err != nil {
+		t.Fatalf("get draft: %v", err)
+	}
+	if draft != nil {
+		t.Fatalf("draft still exists after outgoing record: %#v", draft)
+	}
+
+	conv, err := store.GetConversation("c1")
+	if err != nil {
+		t.Fatalf("get conversation: %v", err)
+	}
+	if conv.LastMessageTS != 999 {
+		t.Fatalf("conversation timestamp = %d, want 999", conv.LastMessageTS)
 	}
 }
 
