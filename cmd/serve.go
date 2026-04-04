@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/maxghenis/openmessage/internal/app"
 	"github.com/maxghenis/openmessage/internal/db"
 	"github.com/maxghenis/openmessage/internal/importer"
+	"github.com/maxghenis/openmessage/internal/notify"
 	"github.com/maxghenis/openmessage/internal/tools"
 	"github.com/maxghenis/openmessage/internal/web"
 )
@@ -28,10 +30,31 @@ func RunServe(logger zerolog.Logger) error {
 	}
 	defer a.Close()
 
+	interactiveTerminal := term.IsTerminal(int(os.Stdin.Fd()))
+	port := os.Getenv("OPENMESSAGES_PORT")
+	if port == "" {
+		port = "7007"
+	}
+	host := os.Getenv("OPENMESSAGES_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	listenAddr := net.JoinHostPort(host, port)
+	baseURL := "http://" + net.JoinHostPort(publicHost(host), port)
+
 	events := web.NewEventBroker()
 	a.OnConversationsChange = events.PublishConversations
 	a.OnMessagesChange = events.PublishMessages
 	a.OnStatusChange = events.PublishStatus
+	a.OnTypingChange = events.PublishTyping
+	a.OnWhatsAppStatusChange = func() {
+		events.PublishStatus(a.Connected.Load())
+	}
+	macNotifier := notify.NewMacOSNotifier(logger, macOSNotificationsEnabled(interactiveTerminal), baseURL)
+	if macNotifier.Enabled() {
+		logger.Info().Msg("Native macOS notifications enabled for fresh inbound messages")
+	}
+	a.OnIncomingMessage = macNotifier.NotifyIncomingMessage
 
 	// Connect to Google Messages (skip in demo mode)
 	if os.Getenv("OPENMESSAGES_DEMO") == "" {
@@ -73,6 +96,30 @@ func RunServe(logger zerolog.Logger) error {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
 
+	if os.Getenv("OPENMESSAGES_DEMO") == "" {
+		if err := a.LoadAndConnectWhatsApp(); err != nil {
+			logger.Warn().Err(err).Msg("WhatsApp live bridge unavailable")
+		}
+	} else {
+		logger.Info().Msg("Demo mode — skipping WhatsApp live bridge")
+	}
+
+	if os.Getenv("OPENMESSAGES_DEMO") == "" {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				status := a.WhatsAppStatus()
+				if !status.Paired || status.Connected || status.Pairing || status.Connecting {
+					continue
+				}
+				if err := a.StartWhatsAppConnect(); err != nil {
+					logger.Warn().Err(err).Msg("WhatsApp reconnect attempt failed")
+				}
+			}
+		}()
+	}
+
 	// Sync WhatsApp and iMessage periodically (every 30s, incremental)
 	identityName := app.LocalIdentityName()
 	lastImportErr := map[string]string{}
@@ -96,9 +143,11 @@ func RunServe(logger zerolog.Logger) error {
 				Msg(successMsg)
 		}
 
-		syncPlatform("whatsapp", "WhatsApp sync complete", func(store *db.Store) (*importer.ImportResult, error) {
-			return (&importer.WhatsAppNative{MyName: identityName}).ImportFromDB(store)
-		})
+		if !a.UsesWhatsAppLiveBridge() {
+			syncPlatform("whatsapp", "WhatsApp sync complete", func(store *db.Store) (*importer.ImportResult, error) {
+				return (&importer.WhatsAppNative{MyName: identityName}).ImportFromDB(store)
+			})
+		}
 		syncPlatform("imessage", "iMessage sync complete", func(store *db.Store) (*importer.ImportResult, error) {
 			return (&importer.IMessage{MyName: identityName}).ImportFromDB(store)
 		})
@@ -118,18 +167,6 @@ func RunServe(logger zerolog.Logger) error {
 		}
 	}()
 
-	// Start web server
-	port := os.Getenv("OPENMESSAGES_PORT")
-	if port == "" {
-		port = "7007"
-	}
-	host := os.Getenv("OPENMESSAGES_HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	listenAddr := net.JoinHostPort(host, port)
-	baseURL := "http://" + net.JoinHostPort(publicHost(host), port)
-
 	// Create MCP server
 	mcpSrv := mcpserver.NewMCPServer(
 		"openmessage",
@@ -145,13 +182,25 @@ func RunServe(logger zerolog.Logger) error {
 	)
 
 	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, web.APIOptions{
-		Client:            a.GetClient,
-		Events:            events,
-		IsConnected:       func() bool { return a.Connected.Load() },
-		Unpair:            a.Unpair,
-		StartDeepBackfill: a.StartDeepBackfill,
-		BackfillStatus:    func() any { return a.GetBackfillProgress() },
-		BackfillPhone:     a.BackfillConversationByPhone,
+		Client:          a.GetClient,
+		Events:          events,
+		IsConnected:     func() bool { return a.Connected.Load() },
+		GoogleStatus:    func() any { return a.GoogleStatus() },
+		ReconnectGoogle: a.ReconnectGoogleMessages,
+		Unpair:          a.Unpair,
+		WhatsAppStatus:  func() any { return a.WhatsAppStatus() },
+		ConnectWhatsApp: a.StartWhatsAppConnect,
+		UnpairWhatsApp:  a.UnpairWhatsApp,
+		WhatsAppQRCode: func() (any, error) {
+			return a.WhatsAppQRCode()
+		},
+		SendWhatsAppText:      a.SendWhatsAppText,
+		SendWhatsAppMedia:     a.SendWhatsAppMedia,
+		WhatsAppAvatar:        a.WhatsAppAvatar,
+		DownloadWhatsAppMedia: a.DownloadWhatsAppMedia,
+		StartDeepBackfill:     a.StartDeepBackfill,
+		BackfillStatus:        func() any { return a.GetBackfillProgress() },
+		BackfillPhone:         a.BackfillConversationByPhone,
 	})
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -165,7 +214,7 @@ func RunServe(logger zerolog.Logger) error {
 		}
 	}()
 
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	if !interactiveTerminal {
 		go func() {
 			logger.Info().Msg("Starting MCP stdio transport")
 			if err := mcpserver.ServeStdio(mcpSrv); err != nil {
@@ -210,6 +259,21 @@ func startupBackfillMode() string {
 	}
 }
 
+func macOSNotificationsEnabled(interactive bool) bool {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("OPENMESSAGES_MACOS_NOTIFICATIONS")))
+	switch mode {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+
+	if !interactive {
+		return false
+	}
+	return strings.EqualFold(runtimeGOOS(), "darwin")
+}
+
 func publicHost(host string) string {
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
@@ -217,6 +281,10 @@ func publicHost(host string) string {
 	default:
 		return host
 	}
+}
+
+var runtimeGOOS = func() string {
+	return runtime.GOOS
 }
 
 func logSyncError(logger zerolog.Logger, lastImportErr map[string]string, platform string, err error) {

@@ -259,6 +259,85 @@ func TestUpsertConversation_DefaultValues(t *testing.T) {
 	}
 }
 
+func TestMergeConversationIDs(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "whatsapp:raw@lid",
+		Name:           "Max Ghenis",
+		Participants:   `[{"name":"Jenn","number":"+134149377675278"}]`,
+		LastMessageTS:  3000,
+		UnreadCount:    2,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed raw conversation: %v", err)
+	}
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "whatsapp:14699991654@s.whatsapp.net",
+		Name:           "Jenn Umanzor",
+		Participants:   `[{"name":"Jenn Umanzor","number":"+14699991654"}]`,
+		LastMessageTS:  2000,
+		UnreadCount:    0,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed canonical conversation: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "whatsapp:m1",
+		ConversationID: "whatsapp:raw@lid",
+		Body:           "hello",
+		TimestampMS:    3000,
+		SourcePlatform: "whatsapp",
+		SourceID:       "m1",
+	}); err != nil {
+		t.Fatalf("seed raw message: %v", err)
+	}
+	if err := store.UpsertDraft(&Draft{
+		DraftID:        "d1",
+		ConversationID: "whatsapp:raw@lid",
+		Body:           "draft",
+		CreatedAt:      1,
+	}); err != nil {
+		t.Fatalf("seed raw draft: %v", err)
+	}
+
+	if err := store.MergeConversationIDs("whatsapp:raw@lid", "whatsapp:14699991654@s.whatsapp.net"); err != nil {
+		t.Fatalf("MergeConversationIDs(): %v", err)
+	}
+
+	if _, err := store.GetConversation("whatsapp:raw@lid"); err == nil {
+		t.Fatal("expected raw conversation to be deleted")
+	}
+	convo, err := store.GetConversation("whatsapp:14699991654@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("GetConversation(): %v", err)
+	}
+	if convo.Name != "Jenn Umanzor" {
+		t.Fatalf("name = %q, want canonical name", convo.Name)
+	}
+	if convo.LastMessageTS != 3000 {
+		t.Fatalf("last message ts = %d, want 3000", convo.LastMessageTS)
+	}
+	if convo.UnreadCount != 2 {
+		t.Fatalf("unread count = %d, want 2", convo.UnreadCount)
+	}
+
+	msgs, err := store.GetMessagesByConversation("whatsapp:14699991654@s.whatsapp.net", 10)
+	if err != nil {
+		t.Fatalf("GetMessagesByConversation(): %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ConversationID != "whatsapp:14699991654@s.whatsapp.net" {
+		t.Fatalf("messages after merge = %#v", msgs)
+	}
+	drafts, err := store.ListDrafts("whatsapp:14699991654@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("ListDrafts(): %v", err)
+	}
+	if len(drafts) != 1 || drafts[0].ConversationID != "whatsapp:14699991654@s.whatsapp.net" {
+		t.Fatalf("drafts after merge = %#v", drafts)
+	}
+}
+
 func TestListConversations_ManyEntries(t *testing.T) {
 	store := newTestStore(t)
 
@@ -290,4 +369,47 @@ func TestListConversations_ManyEntries(t *testing.T) {
 			t.Errorf("count: got %d, want 50", len(got))
 		}
 	})
+}
+
+func TestSearchConversationsByMetadata(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "c1",
+		Name:           "+1 (267) 555-0100",
+		Participants:   `[{"name":"","number":"+12675550100"}]`,
+		LastMessageTS:  2000,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "m1",
+		ConversationID: "c1",
+		SenderName:     "Nathan",
+		SenderNumber:   "+12675550100",
+		Body:           "See you soon",
+		TimestampMS:    2000,
+		SourcePlatform: "sms",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	if err := store.UpsertContact(&Contact{
+		ContactID: "contact-1",
+		Name:      "Nathan",
+		Number:    "+12675550100",
+	}); err != nil {
+		t.Fatalf("seed contact: %v", err)
+	}
+
+	got, err := store.SearchConversationsByMetadata("Nathan", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1", len(got))
+	}
+	if got[0].ConversationID != "c1" {
+		t.Fatalf("got conversation %q, want c1", got[0].ConversationID)
+	}
 }

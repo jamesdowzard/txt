@@ -30,6 +30,9 @@ type mockGMClient struct {
 	fetchMsgErrors  map[string]error                                  // convID -> error
 	listContactsErr error
 	getOrCreateErrs map[string]error // phone -> error
+
+	afterFetchMessages func(conversationID string, pageIdx int)
+	fetchCalls         map[string]int
 }
 
 func (m *mockGMClient) ListConversationsWithCursor(count int, folder gmproto.ListConversationsRequest_Folder, cursor *gmproto.Cursor) (*gmproto.ListConversationsResponse, error) {
@@ -85,6 +88,9 @@ func (m *mockGMClient) FetchMessages(conversationID string, count int64, cursor 
 	if pageIdx >= len(pages) {
 		return &gmproto.ListMessagesResponse{}, nil
 	}
+	if m.fetchCalls != nil {
+		m.fetchCalls[conversationID]++
+	}
 
 	resp := &gmproto.ListMessagesResponse{
 		Messages: pages[pageIdx],
@@ -94,6 +100,9 @@ func (m *mockGMClient) FetchMessages(conversationID string, count int64, cursor 
 		resp.Cursor = &gmproto.Cursor{
 			LastItemID: fmt.Sprintf("msgpage_%d", pageIdx+1),
 		}
+	}
+	if m.afterFetchMessages != nil {
+		m.afterFetchMessages(conversationID, pageIdx)
 	}
 
 	return resp, nil
@@ -696,6 +705,192 @@ func TestBackfillStoresConversationsAndMessages(t *testing.T) {
 	err = a.Backfill()
 	if err == nil {
 		t.Fatal("expected error when client is nil")
+	}
+}
+
+func TestBackfillReturnsBusyWhenAnotherBackfillIsRunning(t *testing.T) {
+	a := &App{}
+	if !a.beginBackfill() {
+		t.Fatal("expected to acquire backfill guard")
+	}
+	defer a.endBackfill()
+
+	err := a.Backfill()
+	if err == nil {
+		t.Fatal("expected backfill to fail while another run is active")
+	}
+	if err.Error() != "backfill already running" {
+		t.Fatalf("backfill error = %q, want %q", err.Error(), "backfill already running")
+	}
+}
+
+func TestStartDeepBackfillReturnsFalseWhenBackfillIsRunning(t *testing.T) {
+	a := &App{}
+	if !a.beginBackfill() {
+		t.Fatal("expected to acquire backfill guard")
+	}
+	defer a.endBackfill()
+
+	if a.StartDeepBackfill() {
+		t.Fatal("deep backfill should not start while another backfill is active")
+	}
+}
+
+func TestStartRecentReconcileReturnsFalseWhenBackfillIsRunning(t *testing.T) {
+	a := &App{}
+	a.backfillRunning.Store(true)
+	defer a.backfillRunning.Store(false)
+
+	if a.StartRecentReconcile("listen_recovered") {
+		t.Fatal("recent reconcile should not start while another backfill is active")
+	}
+}
+
+func TestRecentReconcileStoresRecentMessagesAndPublishesChanges(t *testing.T) {
+	mock := &mockGMClient{
+		conversations: map[gmproto.ListConversationsRequest_Folder][][]*gmproto.Conversation{
+			gmproto.ListConversationsRequest_INBOX: {
+				{makeConv("c1", "Alice")},
+			},
+		},
+		messages: map[string][][]*gmproto.Message{
+			"c1": {
+				{makeMsg("m1", "c1", "newer hello", 100), makeMsg("m2", "c1", "newer follow-up", 200)},
+			},
+		},
+	}
+
+	a := newTestApp(t, mock)
+	var (
+		conversationChanges int
+		messagesChangedFor  string
+	)
+	a.OnConversationsChange = func() {
+		conversationChanges++
+	}
+	a.OnMessagesChange = func(conversationID string) {
+		messagesChangedFor = conversationID
+	}
+
+	a.reconcileRecentConversations("listen_recovered")
+
+	convos, err := a.Store.ListConversations(10)
+	if err != nil {
+		t.Fatalf("list conversations: %v", err)
+	}
+	if len(convos) != 1 {
+		t.Fatalf("stored conversations = %d, want 1", len(convos))
+	}
+
+	msgs, err := a.Store.GetMessagesByConversation("c1", 10)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("stored messages = %d, want 2", len(msgs))
+	}
+	if conversationChanges != 1 {
+		t.Fatalf("conversation change callback count = %d, want 1", conversationChanges)
+	}
+	if messagesChangedFor != "" {
+		t.Fatalf("messages change callback conversation = %q, want global refresh", messagesChangedFor)
+	}
+}
+
+func TestRecentReconcilePagesUntilItCrossesLocalBoundary(t *testing.T) {
+	mock := &mockGMClient{
+		conversations: map[gmproto.ListConversationsRequest_Folder][][]*gmproto.Conversation{
+			gmproto.ListConversationsRequest_INBOX: {
+				{makeConv("c1", "Alice")},
+			},
+		},
+		messages: map[string][][]*gmproto.Message{
+			"c1": {
+				{makeMsg("m5", "c1", "latest", 500), makeMsg("m4", "c1", "newer", 400)},
+				{makeMsg("m3", "c1", "middle", 300), makeMsg("m2", "c1", "older", 200), makeMsg("m1", "c1", "existing", 100)},
+			},
+		},
+		fetchCalls: map[string]int{},
+	}
+
+	a := newTestApp(t, mock)
+	if err := a.Store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "Alice",
+		LastMessageTS:  100,
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if err := a.Store.UpsertMessage(&db.Message{
+		MessageID:      "m1",
+		ConversationID: "c1",
+		Body:           "existing",
+		TimestampMS:    100,
+	}); err != nil {
+		t.Fatalf("seed boundary message: %v", err)
+	}
+
+	a.reconcileRecentConversations("listen_recovered")
+
+	if mock.fetchCalls["c1"] != 2 {
+		t.Fatalf("fetch call count = %d, want 2 pages to cross the local boundary", mock.fetchCalls["c1"])
+	}
+
+	msgs, err := a.Store.GetMessagesByConversation("c1", 10)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("stored messages = %d, want 5 after paging recovery", len(msgs))
+	}
+	if msgs[0].MessageID != "m5" {
+		t.Fatalf("most recent message = %q, want m5", msgs[0].MessageID)
+	}
+}
+
+func TestDeepBackfillStopsWhenClientChanges(t *testing.T) {
+	replacement := &mockGMClient{}
+	mock := &mockGMClient{
+		conversations: map[gmproto.ListConversationsRequest_Folder][][]*gmproto.Conversation{
+			gmproto.ListConversationsRequest_INBOX: {
+				{makeConv("c1", "Alice")},
+			},
+		},
+		messages: map[string][][]*gmproto.Message{
+			"c1": {
+				{makeMsg("m1", "c1", "page1-a", 100), makeMsg("m2", "c1", "page1-b", 200)},
+				{makeMsg("m3", "c1", "page2-a", 300)},
+			},
+		},
+		fetchCalls: map[string]int{},
+	}
+
+	a := newTestApp(t, mock)
+	mock.afterFetchMessages = func(conversationID string, pageIdx int) {
+		if conversationID == "c1" && pageIdx == 0 {
+			a.gmClient = replacement
+		}
+	}
+
+	a.DeepBackfill()
+
+	msgs, err := a.Store.GetMessagesByConversation("c1", 100)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("got %d stored messages, want 2 from the first page only", len(msgs))
+	}
+	if mock.fetchCalls["c1"] != 1 {
+		t.Fatalf("fetch call count = %d, want 1 before abort", mock.fetchCalls["c1"])
+	}
+
+	progress := a.GetBackfillProgress()
+	if progress.MessagesFound != 2 {
+		t.Fatalf("messages found = %d, want 2 before abort", progress.MessagesFound)
+	}
+	if progress.Phase != BackfillPhaseDone {
+		t.Fatalf("phase = %q, want %q", progress.Phase, BackfillPhaseDone)
 	}
 }
 

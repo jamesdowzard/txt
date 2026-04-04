@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm"
@@ -16,13 +17,16 @@ import (
 type OnDisconnect func()
 
 type EventHandler struct {
-	Store                 *db.Store
-	Logger                zerolog.Logger
-	SessionPath           string
-	Client                *Client
-	OnConversationsChange func()
-	OnDisconnect          OnDisconnect
-	OnMessagesChange      func(string)
+	Store                  *db.Store
+	Logger                 zerolog.Logger
+	SessionPath            string
+	Client                 *Client
+	OnConversationsChange  func()
+	OnDisconnect           OnDisconnect
+	OnIncomingMessage      func(*db.Message)
+	OnMessagesChange       func(string)
+	OnRealtimeGapRecovered func(string)
+	OnTypingChange         func(conversationID, senderName, senderNumber string, typing bool)
 }
 
 func (h *EventHandler) Handle(rawEvt any) {
@@ -46,10 +50,18 @@ func (h *EventHandler) Handle(rawEvt any) {
 		h.Logger.Warn().Err(evt.Error).Msg("Listen temporary error")
 	case *events.ListenRecovered:
 		h.Logger.Info().Msg("Listen recovered")
+		if h.OnRealtimeGapRecovered != nil {
+			h.OnRealtimeGapRecovered("listen_recovered")
+		}
 	case *events.PhoneNotResponding:
 		h.Logger.Warn().Msg("Phone not responding")
 	case *events.PhoneRespondingAgain:
 		h.Logger.Info().Msg("Phone responding again")
+		if h.OnRealtimeGapRecovered != nil {
+			h.OnRealtimeGapRecovered("phone_responding_again")
+		}
+	case *gmproto.TypingData:
+		h.handleTyping(evt)
 	default:
 		h.Logger.Debug().Type("type", evt).Msg("Unhandled event")
 	}
@@ -107,6 +119,9 @@ func (h *EventHandler) handleMessage(evt *libgm.WrappedMessage) {
 		h.Logger.Error().Err(err).Str("msg_id", dbMsg.MessageID).Msg("Failed to store message")
 		return
 	}
+	if err := h.Store.BumpConversationTimestamp(dbMsg.ConversationID, dbMsg.TimestampMS); err != nil {
+		h.Logger.Warn().Err(err).Str("conv_id", dbMsg.ConversationID).Msg("Failed to update conversation timestamp from message")
+	}
 
 	// When our sent message echoes back with a real server ID, clean up the
 	// exact tmp_ placeholder we stored at send time to avoid duplicates.
@@ -124,6 +139,9 @@ func (h *EventHandler) handleMessage(evt *libgm.WrappedMessage) {
 		Bool("is_old", evt.IsOld).
 		Msg("Stored message")
 
+	if !dbMsg.IsFromMe && !evt.IsOld && h.OnIncomingMessage != nil {
+		h.OnIncomingMessage(dbMsg)
+	}
 	if h.OnMessagesChange != nil {
 		h.OnMessagesChange(dbMsg.ConversationID)
 	}
@@ -188,6 +206,64 @@ func (h *EventHandler) storeConversation(conv *gmproto.Conversation) bool {
 	}
 	h.Logger.Debug().Str("conv_id", dbConv.ConversationID).Str("name", dbConv.Name).Msg("Stored conversation")
 	return true
+}
+
+func (h *EventHandler) handleTyping(evt *gmproto.TypingData) {
+	if evt == nil || h.OnTypingChange == nil {
+		return
+	}
+	conversationID := strings.TrimSpace(evt.GetConversationID())
+	if conversationID == "" {
+		return
+	}
+	senderNumber := strings.TrimSpace(evt.GetUser().GetNumber())
+	senderName := h.typingSenderName(conversationID, senderNumber)
+	typing := evt.GetType() == gmproto.TypingTypes_STARTED_TYPING
+	h.Logger.Debug().
+		Str("conv_id", conversationID).
+		Str("sender_number", senderNumber).
+		Bool("typing", typing).
+		Msg("Received typing event")
+	h.OnTypingChange(conversationID, senderName, senderNumber, typing)
+}
+
+func (h *EventHandler) typingSenderName(conversationID, senderNumber string) string {
+	conv, err := h.Store.GetConversation(conversationID)
+	if err != nil || conv == nil {
+		return ""
+	}
+
+	type participant struct {
+		Name   string `json:"name"`
+		Number string `json:"number"`
+		IsMe   bool   `json:"is_me,omitempty"`
+	}
+	var participants []participant
+	if err := json.Unmarshal([]byte(conv.Participants), &participants); err == nil {
+		normalizedSender := normalizeTypingParticipant(senderNumber)
+		for _, participant := range participants {
+			if participant.IsMe {
+				continue
+			}
+			if normalizedSender != "" && normalizeTypingParticipant(participant.Number) == normalizedSender {
+				return strings.TrimSpace(participant.Name)
+			}
+		}
+	}
+
+	if !conv.IsGroup {
+		return strings.TrimSpace(conv.Name)
+	}
+	return ""
+}
+
+func normalizeTypingParticipant(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "")
+	return replacer.Replace(value)
 }
 
 func (h *EventHandler) handleAuthRefresh() {

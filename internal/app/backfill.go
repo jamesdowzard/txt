@@ -11,9 +11,20 @@ import (
 	"github.com/maxghenis/openmessage/internal/db"
 )
 
+const (
+	recentReconcileConversationLimit = 50
+	recentReconcileMessageLimit      = 30
+	recentReconcileMaxPages          = 4
+)
+
 // Backfill fetches existing conversations and recent messages from
 // Google Messages and stores them in the local database.
 func (a *App) Backfill() error {
+	if !a.beginBackfill() {
+		return fmt.Errorf("backfill already running")
+	}
+	defer a.endBackfill()
+
 	cli := a.GetClient()
 	if cli == nil {
 		return fmt.Errorf("client not connected")
@@ -56,7 +67,7 @@ func (a *App) Backfill() error {
 // fetches ALL messages for each conversation, and discovers conversations via
 // contacts that may not appear in any folder listing.
 func (a *App) DeepBackfill() {
-	if !a.deepBackfillRunning.CompareAndSwap(false, true) {
+	if !a.beginBackfill() {
 		a.Logger.Warn().Msg("Deep backfill already running")
 		return
 	}
@@ -64,9 +75,9 @@ func (a *App) DeepBackfill() {
 }
 
 func (a *App) deepBackfill() {
-	defer a.deepBackfillRunning.Store(false)
+	defer a.endBackfill()
 
-	gm := a.getGMClient()
+	gm, clientToken := a.currentBackfillClient()
 	if gm == nil {
 		a.Logger.Error().Msg("Deep backfill: client not connected")
 		return
@@ -86,7 +97,12 @@ func (a *App) deepBackfill() {
 	}
 
 	for _, folder := range folders {
-		n := a.paginateFolder(gm, folder, seen)
+		n, aborted := a.paginateFolder(gm, folder, seen, clientToken)
+		if aborted {
+			a.emitConversationsChange()
+			a.emitMessagesChange("")
+			return
+		}
 		a.BackfillProgress.add(0, 0, 0, 1)
 		a.Logger.Info().
 			Str("folder", folder.String()).
@@ -98,13 +114,22 @@ func (a *App) deepBackfill() {
 	a.BackfillProgress.setPhase(BackfillPhaseMessages)
 
 	for convID := range seen {
-		n := a.deepBackfillConversation(gm, convID)
+		n, aborted := a.deepBackfillConversationWithToken(gm, convID, clientToken)
 		a.BackfillProgress.add(0, n, 0, 0)
+		if aborted {
+			a.emitConversationsChange()
+			a.emitMessagesChange("")
+			return
+		}
 	}
 
 	// Phase C: Contact-based discovery for orphan phone numbers
 	a.BackfillProgress.setPhase(BackfillPhaseContacts)
-	a.discoverFromContacts(gm, seen)
+	if a.discoverFromContacts(gm, seen, clientToken) {
+		a.emitConversationsChange()
+		a.emitMessagesChange("")
+		return
+	}
 
 	progress := a.BackfillProgress.snapshot()
 	a.Logger.Info().
@@ -117,14 +142,25 @@ func (a *App) deepBackfill() {
 	a.emitMessagesChange("")
 }
 
+func (a *App) deepBackfillShouldAbort(clientToken any, phase string) bool {
+	if clientToken == nil || a.backfillClientStillCurrent(clientToken) {
+		return false
+	}
+	a.Logger.Warn().Str("phase", phase).Msg("Deep backfill aborted because client changed or disconnected")
+	return true
+}
+
 // paginateFolder fetches all conversations in a folder using cursor pagination.
 // It stores each conversation and adds its ID to the seen map. Returns the
 // number of new conversations found in this folder.
-func (a *App) paginateFolder(gm GMClient, folder gmproto.ListConversationsRequest_Folder, seen map[string]bool) int {
+func (a *App) paginateFolder(gm GMClient, folder gmproto.ListConversationsRequest_Folder, seen map[string]bool, clientToken any) (int, bool) {
 	found := 0
 	var cursor *gmproto.Cursor
 
 	for {
+		if a.deepBackfillShouldAbort(clientToken, "folders") {
+			return found, true
+		}
 		resp, err := gm.ListConversationsWithCursor(100, folder, cursor)
 		if err != nil {
 			a.Logger.Error().Err(err).Str("folder", folder.String()).Msg("Deep backfill: list conversations failed")
@@ -174,15 +210,23 @@ func (a *App) paginateFolder(gm GMClient, folder gmproto.ListConversationsReques
 			Msg("Deep backfill: fetched conversation batch")
 	}
 
-	return found
+	return found, false
 }
 
 // deepBackfillConversation fetches all messages in a conversation using cursor pagination.
 func (a *App) deepBackfillConversation(gm GMClient, convID string) int {
+	total, _ := a.deepBackfillConversationWithToken(gm, convID, nil)
+	return total
+}
+
+func (a *App) deepBackfillConversationWithToken(gm GMClient, convID string, clientToken any) (int, bool) {
 	total := 0
 	var cursor *gmproto.Cursor
 
 	for {
+		if a.deepBackfillShouldAbort(clientToken, "messages") {
+			return total, true
+		}
 		resp, err := gm.FetchMessages(convID, 50, cursor)
 		if err != nil {
 			a.Logger.Warn().Err(err).Str("conv_id", convID).Msg("Deep backfill: fetch messages failed")
@@ -219,23 +263,29 @@ func (a *App) deepBackfillConversation(gm GMClient, convID string) int {
 			Msg("Deep backfill: conversation complete")
 	}
 
-	return total
+	return total, false
 }
 
 // discoverFromContacts lists all contacts and tries to find conversations
 // for phone numbers not already seen in the folder scan.
-func (a *App) discoverFromContacts(gm GMClient, seen map[string]bool) {
+func (a *App) discoverFromContacts(gm GMClient, seen map[string]bool, clientToken any) bool {
+	if a.deepBackfillShouldAbort(clientToken, "contacts") {
+		return true
+	}
 	contactsResp, err := gm.ListContacts()
 	if err != nil {
 		a.Logger.Warn().Err(err).Msg("Deep backfill: list contacts failed")
 		a.BackfillProgress.addError(fmt.Sprintf("list contacts: %v", err))
-		return
+		return false
 	}
 
 	contacts := contactsResp.GetContacts()
 	a.Logger.Info().Int("count", len(contacts)).Msg("Deep backfill: checking contacts for orphan conversations")
 
 	for _, contact := range contacts {
+		if a.deepBackfillShouldAbort(clientToken, "contacts") {
+			return true
+		}
 		num := contact.GetNumber()
 		if num == nil || num.GetNumber() == "" {
 			continue
@@ -275,8 +325,11 @@ func (a *App) discoverFromContacts(gm GMClient, seen map[string]bool) {
 			continue
 		}
 
-		n := a.deepBackfillConversation(gm, convID)
+		n, aborted := a.deepBackfillConversationWithToken(gm, convID, clientToken)
 		a.BackfillProgress.add(1, n, 0, 0)
+		if aborted {
+			return true
+		}
 
 		a.Logger.Info().
 			Str("phone", phone).
@@ -284,6 +337,7 @@ func (a *App) discoverFromContacts(gm GMClient, seen map[string]bool) {
 			Int("messages", n).
 			Msg("Deep backfill: discovered conversation via contact")
 	}
+	return false
 }
 
 // BackfillConversationByPhone looks up or creates a conversation for a specific
@@ -320,6 +374,134 @@ func (a *App) BackfillConversationByPhone(phone string) error {
 	a.emitMessagesChange(conv.GetConversationID())
 
 	return nil
+}
+
+func (a *App) reconcileRecentConversations(reason string) {
+	defer a.reconcileRunning.Store(false)
+
+	gm, clientToken := a.currentBackfillClient()
+	if gm == nil {
+		a.Logger.Warn().Str("reason", reason).Msg("Skipping recent reconcile because client is not connected")
+		return
+	}
+
+	a.Logger.Info().
+		Str("reason", reason).
+		Int("conversation_limit", recentReconcileConversationLimit).
+		Int("message_limit", recentReconcileMessageLimit).
+		Msg("Reconciling recent conversations")
+
+	resp, err := gm.ListConversationsWithCursor(recentReconcileConversationLimit, gmproto.ListConversationsRequest_INBOX, nil)
+	if err != nil {
+		a.Logger.Warn().Err(err).Str("reason", reason).Msg("Recent reconcile: list conversations failed")
+		return
+	}
+
+	convos := resp.GetConversations()
+	if len(convos) == 0 {
+		return
+	}
+
+	var changed bool
+	for _, conv := range convos {
+		if !a.backfillClientStillCurrent(clientToken) {
+			a.Logger.Warn().Str("reason", reason).Msg("Recent reconcile aborted because client changed or disconnected")
+			return
+		}
+
+		if err := a.storeConversation(conv); err != nil {
+			a.Logger.Warn().Err(err).Str("conv_id", conv.GetConversationID()).Msg("Recent reconcile: store conversation failed")
+		} else {
+			changed = true
+		}
+
+		storedMessages, aborted := a.reconcileRecentConversationMessages(gm, conv.GetConversationID(), clientToken)
+		if aborted {
+			a.Logger.Warn().Str("reason", reason).Str("conv_id", conv.GetConversationID()).Msg("Recent reconcile aborted while fetching messages")
+			return
+		}
+		if storedMessages {
+			changed = true
+		}
+	}
+
+	if changed {
+		a.emitConversationsChange()
+		a.emitMessagesChange("")
+	}
+}
+
+func (a *App) reconcileRecentConversationMessages(gm GMClient, convID string, clientToken any) (bool, bool) {
+	localLatest, err := a.Store.GetMessagesByConversation(convID, 1)
+	if err != nil {
+		a.Logger.Warn().Err(err).Str("conv_id", convID).Msg("Recent reconcile: read local boundary failed")
+	}
+
+	var (
+		localLatestTS int64
+		localLatestID string
+		cursor        *gmproto.Cursor
+		storedAny     bool
+	)
+	if len(localLatest) > 0 {
+		localLatestTS = localLatest[0].TimestampMS
+		localLatestID = localLatest[0].MessageID
+	}
+
+	for page := 0; page < recentReconcileMaxPages; page++ {
+		if !a.backfillClientStillCurrent(clientToken) {
+			return storedAny, true
+		}
+
+		msgResp, err := gm.FetchMessages(convID, recentReconcileMessageLimit, cursor)
+		if err != nil {
+			a.Logger.Warn().Err(err).Str("conv_id", convID).Int("page", page).Msg("Recent reconcile: fetch messages failed")
+			return storedAny, false
+		}
+
+		msgs := msgResp.GetMessages()
+		if len(msgs) == 0 {
+			return storedAny, false
+		}
+
+		for _, msg := range msgs {
+			a.storeMessage(msg)
+		}
+		storedAny = true
+
+		if localLatestTS == 0 {
+			return storedAny, false
+		}
+		if reconcileBatchReachedLocalBoundary(msgs, localLatestTS, localLatestID) {
+			return storedAny, false
+		}
+
+		cursor = msgResp.GetCursor()
+		if cursor == nil {
+			return storedAny, false
+		}
+	}
+
+	return storedAny, false
+}
+
+func reconcileBatchReachedLocalBoundary(msgs []*gmproto.Message, localLatestTS int64, localLatestID string) bool {
+	if localLatestTS == 0 || len(msgs) == 0 {
+		return true
+	}
+
+	oldestTS := msgs[0].GetTimestamp() / 1000
+	for _, msg := range msgs {
+		ts := msg.GetTimestamp() / 1000
+		if ts < oldestTS {
+			oldestTS = ts
+		}
+		if localLatestID != "" && msg.GetMessageID() == localLatestID {
+			return true
+		}
+	}
+
+	return oldestTS < localLatestTS
 }
 
 func (a *App) storeConversation(conv *gmproto.Conversation) error {

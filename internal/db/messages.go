@@ -17,7 +17,17 @@ func (s *Store) UpsertMessage(m *Message) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`
+	if err := upsertMessageTx(tx, m); err != nil {
+		return err
+	}
+	if err := s.syncMessageSearchIndex(tx, m.MessageID, m.Body); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertMessageTx(tx *sql.Tx, m *Message) error {
+	_, err := tx.Exec(`
 		INSERT INTO messages (message_id, conversation_id, sender_name, sender_number, body, timestamp_ms, status, is_from_me, media_id, mime_type, decryption_key, reactions, reply_to_id, source_platform, source_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(message_id) DO UPDATE SET
@@ -39,8 +49,29 @@ func (s *Store) UpsertMessage(m *Message) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (s *Store) RecordOutgoingMessage(m *Message, deleteDraftID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := upsertMessageTx(tx, m); err != nil {
+		return err
+	}
 	if err := s.syncMessageSearchIndex(tx, m.MessageID, m.Body); err != nil {
 		return err
+	}
+	if _, err := tx.Exec(`UPDATE conversations SET last_message_ts = ? WHERE conversation_id = ?`, m.TimestampMS, m.ConversationID); err != nil {
+		return err
+	}
+	if deleteDraftID != "" {
+		if _, err := tx.Exec(`DELETE FROM drafts WHERE draft_id = ?`, deleteDraftID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -50,7 +81,7 @@ func (s *Store) GetMessagesByConversation(conversationID string, limit int) ([]*
 		SELECT `+messageColumns+`
 		FROM messages
 		WHERE conversation_id = ?
-		ORDER BY timestamp_ms DESC
+		ORDER BY timestamp_ms DESC, message_id DESC
 		LIMIT ?
 	`, conversationID, limit)
 	if err != nil {
@@ -60,14 +91,26 @@ func (s *Store) GetMessagesByConversation(conversationID string, limit int) ([]*
 	return scanMessages(rows)
 }
 
-func (s *Store) GetMessagesByConversationBefore(conversationID string, beforeMS int64, limit int) ([]*Message, error) {
-	rows, err := s.db.Query(`
-		SELECT `+messageColumns+`
+func (s *Store) GetMessagesByConversationBefore(conversationID string, beforeMS int64, beforeID string, limit int) ([]*Message, error) {
+	query := `
+		SELECT ` + messageColumns + `
 		FROM messages
 		WHERE conversation_id = ? AND timestamp_ms < ?
-		ORDER BY timestamp_ms DESC
+		ORDER BY timestamp_ms DESC, message_id DESC
 		LIMIT ?
-	`, conversationID, beforeMS, limit)
+	`
+	args := []any{conversationID, beforeMS, limit}
+	if beforeID != "" {
+		query = `
+		SELECT ` + messageColumns + `
+		FROM messages
+		WHERE conversation_id = ? AND (timestamp_ms < ? OR (timestamp_ms = ? AND message_id < ?))
+		ORDER BY timestamp_ms DESC, message_id DESC
+		LIMIT ?
+	`
+		args = []any{conversationID, beforeMS, beforeMS, beforeID, limit}
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,14 +118,26 @@ func (s *Store) GetMessagesByConversationBefore(conversationID string, beforeMS 
 	return scanMessages(rows)
 }
 
-func (s *Store) GetMessagesByConversationAfter(conversationID string, afterMS int64, limit int) ([]*Message, error) {
-	rows, err := s.db.Query(`
-		SELECT `+messageColumns+`
+func (s *Store) GetMessagesByConversationAfter(conversationID string, afterMS int64, afterID string, limit int) ([]*Message, error) {
+	query := `
+		SELECT ` + messageColumns + `
 		FROM messages
 		WHERE conversation_id = ? AND timestamp_ms > ?
-		ORDER BY timestamp_ms ASC
+		ORDER BY timestamp_ms ASC, message_id ASC
 		LIMIT ?
-	`, conversationID, afterMS, limit)
+	`
+	args := []any{conversationID, afterMS, limit}
+	if afterID != "" {
+		query = `
+		SELECT ` + messageColumns + `
+		FROM messages
+		WHERE conversation_id = ? AND (timestamp_ms > ? OR (timestamp_ms = ? AND message_id > ?))
+		ORDER BY timestamp_ms ASC, message_id ASC
+		LIMIT ?
+	`
+		args = []any{conversationID, afterMS, afterMS, afterID, limit}
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +256,50 @@ func (s *Store) GetMessageByID(messageID string) (*Message, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func (s *Store) ListLegacyWhatsAppMediaPlaceholders(limit int) ([]*Message, error) {
+	rows, err := s.db.Query(`
+		SELECT `+messageColumns+`
+		FROM messages
+		WHERE source_platform = 'whatsapp'
+			AND body IN ('[Photo]', '[Video]', '[Audio]', '[Voice note]')
+			AND IFNULL(media_id, '') = ''
+		ORDER BY timestamp_ms DESC, message_id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *Store) FindUnresolvedWhatsAppPlaceholderAlias(conversationID string, timestampMS int64, body, sourceID string) (*Message, error) {
+	rows, err := s.db.Query(`
+		SELECT `+messageColumns+`
+		FROM messages
+		WHERE source_platform = 'whatsapp'
+			AND conversation_id = ?
+			AND timestamp_ms = ?
+			AND body = ?
+			AND IFNULL(media_id, '') = ''
+			AND IFNULL(source_id, '') <> ?
+		ORDER BY message_id ASC
+		LIMIT 2
+	`, conversationID, timestampMS, strings.TrimSpace(body), strings.TrimSpace(sourceID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages, err := scanMessages(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) != 1 {
+		return nil, nil
+	}
+	return messages[0], nil
 }
 
 // GetMessagesByConversations returns messages from multiple conversations,

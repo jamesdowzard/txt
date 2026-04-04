@@ -1,13 +1,16 @@
+import AppKit
 import SwiftUI
 import WebKit
 
 struct ContentView: View {
     @ObservedObject var backend: BackendManager
     @StateObject private var notifications: NotificationManager
+    @StateObject private var contacts: ContactsManager
 
     init(backend: BackendManager) {
         self._backend = ObservedObject(wrappedValue: backend)
         self._notifications = StateObject(wrappedValue: NotificationManager(baseURL: backend.baseURL))
+        self._contacts = StateObject(wrappedValue: ContactsManager())
     }
 
     var body: some View {
@@ -18,7 +21,7 @@ struct ContentView: View {
             case .needsPairing:
                 PairingView(backend: backend)
             case .running:
-                WebViewContainer(url: backend.baseURL)
+                WebViewContainer(url: backend.baseURL, notifications: notifications, contacts: contacts)
             case .error(let message):
                 ErrorView(message: message, backend: backend)
             }
@@ -87,21 +90,180 @@ struct ErrorView: View {
 
 struct WebViewContainer: NSViewRepresentable {
     let url: URL
+    @ObservedObject var notifications: NotificationManager
+    @ObservedObject var contacts: ContactsManager
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(notifications: notifications, contacts: contacts)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        config.userContentController.addUserScript(WKUserScript(
+            source: Self.notificationBridgeScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        config.userContentController.add(context.coordinator, name: Coordinator.handlerName)
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.setValue(false, forKey: "drawsBackground") // Transparent during load
+        context.coordinator.webView = webView
+        webView.navigationDelegate = context.coordinator
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.notifications = notifications
+        context.coordinator.contacts = contacts
         // Only reload if URL changed
         if webView.url != url {
             webView.load(URLRequest(url: url))
+        }
+    }
+
+    private static let notificationBridgeScript = """
+    (() => {
+      if (window.OpenMessageNativeNotifications) return;
+      const pending = new Map();
+      function request(type, extra = {}) {
+        return new Promise((resolve, reject) => {
+          const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          pending.set(requestId, { resolve, reject });
+          window.webkit.messageHandlers.openmessageNotifications.postMessage({ type, requestId, ...extra });
+        });
+      }
+      window.__openMessageResolveNativeNotifications = function(requestId, payload) {
+        const pendingRequest = pending.get(requestId);
+        if (!pendingRequest) return;
+        pending.delete(requestId);
+        pendingRequest.resolve(payload);
+      };
+      window.__openMessageRejectNativeNotifications = function(requestId, message) {
+        const pendingRequest = pending.get(requestId);
+        if (!pendingRequest) return;
+        pending.delete(requestId);
+        pendingRequest.reject(new Error(message || 'Notification bridge request failed'));
+      };
+        window.OpenMessageNativeNotifications = {
+        isNative: true,
+        getState() {
+          return request('getState');
+        },
+        setEnabled(enabled) {
+          return request('setEnabled', { enabled: !!enabled });
+        },
+        openSettings() {
+          return request('openSettings');
+        },
+      };
+      window.OpenMessageNativeContacts = {
+        isNative: true,
+        getAvatar(name, numbers = []) {
+          return request('getAvatar', {
+            name: typeof name === 'string' ? name : '',
+            numbers: Array.isArray(numbers) ? numbers : [],
+          });
+        },
+      };
+    })();
+    """
+
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        static let handlerName = "openmessageNotifications"
+
+        var notifications: NotificationManager
+        var contacts: ContactsManager
+        weak var webView: WKWebView?
+
+        init(notifications: NotificationManager, contacts: ContactsManager) {
+            self.notifications = notifications
+            self.contacts = contacts
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == Self.handlerName else { return }
+            guard let body = message.body as? [String: Any] else { return }
+            let type = body["type"] as? String ?? ""
+            let requestID = body["requestId"] as? String ?? ""
+
+            Task { @MainActor in
+                do {
+                    switch type {
+                    case "getState":
+                        let state = await notifications.bridgeState()
+                        resolve(requestID: requestID, payload: state)
+                    case "setEnabled":
+                        let enabled = (body["enabled"] as? NSNumber)?.boolValue ?? false
+                        let state = await notifications.setEnabled(enabled)
+                        resolve(requestID: requestID, payload: state)
+                    case "openSettings":
+                        notifications.openSystemSettings()
+                        resolveEmpty(requestID: requestID)
+                    case "getAvatar":
+                        let name = body["name"] as? String ?? ""
+                        let numbers = (body["numbers"] as? [String]) ?? ((body["numbers"] as? [Any])?.compactMap { $0 as? String } ?? [])
+                        let dataURL = await contacts.avatarDataURL(name: name, numbers: numbers)
+                        resolve(requestID: requestID, payload: ContactsManager.AvatarPayload(data_url: dataURL))
+                    default:
+                        reject(requestID: requestID, message: "Unknown notification bridge request")
+                    }
+                }
+            }
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.navigationType == .linkActivated || navigationAction.targetFrame == nil,
+               let targetURL = navigationAction.request.url {
+                NSWorkspace.shared.open(targetURL)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        private func resolve<T: Encodable>(requestID: String, payload: T) {
+            guard let webView else { return }
+            let encoder = JSONEncoder()
+            guard
+                let requestData = try? encoder.encode(requestID),
+                let requestJSON = String(data: requestData, encoding: .utf8),
+                let payloadData = try? encoder.encode(payload),
+                let payloadJSON = String(data: payloadData, encoding: .utf8)
+            else {
+                reject(requestID: requestID, message: "Failed to encode native bridge payload")
+                return
+            }
+            webView.evaluateJavaScript("window.__openMessageResolveNativeNotifications(\(requestJSON), \(payloadJSON));")
+        }
+
+        private func reject(requestID: String, message: String) {
+            guard let webView else { return }
+            let encoder = JSONEncoder()
+            guard
+                let requestData = try? encoder.encode(requestID),
+                let requestJSON = String(data: requestData, encoding: .utf8),
+                let messageData = try? encoder.encode(message),
+                let messageJSON = String(data: messageData, encoding: .utf8)
+            else {
+                return
+            }
+            webView.evaluateJavaScript("window.__openMessageRejectNativeNotifications(\(requestJSON), \(messageJSON));")
+        }
+
+        private func resolveEmpty(requestID: String) {
+            guard let webView else { return }
+            let encoder = JSONEncoder()
+            guard
+                let requestData = try? encoder.encode(requestID),
+                let requestJSON = String(data: requestData, encoding: .utf8)
+            else {
+                return
+            }
+            webView.evaluateJavaScript("window.__openMessageResolveNativeNotifications(\(requestJSON), null);")
         }
     }
 }

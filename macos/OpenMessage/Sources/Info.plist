@@ -25,6 +25,8 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <key>NSContactsUsageDescription</key>
+    <string>OpenMessage uses your local Contacts photos to show profile pictures for people you message.</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.social-networking</string>
     <key>CFBundleIconFile</key>

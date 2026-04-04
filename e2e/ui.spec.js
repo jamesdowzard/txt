@@ -7,11 +7,32 @@ async function openConversation(page, name) {
   await expect(page.locator('#chat-header-name')).toHaveText(name);
 }
 
+async function expectThreadNearBottom(page) {
+  await expect
+    .poll(async () => page.locator('#messages-area').evaluate((el) => {
+      return el.scrollHeight - el.scrollTop - el.clientHeight;
+    }))
+    .toBeLessThan(8);
+}
+
+async function expectLastMessageVisible(page) {
+  await expect
+    .poll(async () => page.locator('#messages-area').evaluate((container) => {
+      const messages = container.querySelectorAll('.msg');
+      const last = messages[messages.length - 1];
+      if (!last) return false;
+      const containerRect = container.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      return lastRect.bottom <= containerRect.bottom && lastRect.top >= containerRect.top;
+    }))
+    .toBe(true);
+}
+
 test.beforeEach(async ({ page, request }) => {
   await request.post('/_e2e/drafts', {
     data: {
       body: hikingDraft,
-      conversation_id: 'conv3',
+      conversation_id: 'conv1',
       draft_id: 'draft1',
     },
   });
@@ -20,10 +41,109 @@ test.beforeEach(async ({ page, request }) => {
 
 test('loads the seeded conversation list and thread view', async ({ page }) => {
   await expect(page.locator('#connection-banner.disconnected')).toHaveCount(0);
-  await expect(page.locator('#conversation-list .convo-item')).toHaveCount(9);
+  await expect(page.locator('#conversation-list .convo-item')).toHaveCount(12);
   await openConversation(page, 'Sarah Chen');
   await expect(page.locator('#messages-area')).toContainText('Hey! Are you free for dinner tonight?');
   await expect(page.locator('#compose-input')).toBeVisible();
+});
+
+test('opens a deep-linked conversation from the URL', async ({ page }) => {
+  await page.goto('/?conversation=conv1');
+  await expect(page.locator('#chat-header-name')).toHaveText('Sarah Chen');
+  await expect(page.locator('#messages-area')).toContainText('Hey! Are you free for dinner tonight?');
+});
+
+test('shows platform badges and filters threads by source', async ({ page }) => {
+  await expect(page.locator('#sidebar-source-filters')).toContainText('WhatsApp');
+  await expect(page.locator('#conversation-list .platform-chip--whatsapp')).toHaveCount(3);
+
+  await page.getByRole('button', { name: /WhatsApp 3/i }).click();
+
+  await expect(page.locator('#conversation-list .convo-item')).toHaveCount(3);
+  await expect(page.locator('#conversation-list')).toContainText('Weekend Hiking Group');
+  await expect(page.locator('#conversation-list')).toContainText('Lisa Rodriguez');
+  await expect(page.locator('#conversation-list')).toContainText('Jordan Rivera');
+  await expect(page.locator('#conversation-list')).not.toContainText('Sarah Chen');
+
+  await openConversation(page, 'Weekend Hiking Group');
+  await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+});
+
+test('search matches conversation names and updates platform chip counts', async ({ page }) => {
+  await page.locator('#search-input').fill('Jordan');
+
+  await expect(page.locator('#conversation-list .convo-item')).toHaveCount(3);
+  await expect(page.locator('#sidebar-source-filters')).toContainText('All');
+  await expect(page.locator('#sidebar-source-filters')).toContainText('SMS');
+  await expect(page.locator('#sidebar-source-filters')).toContainText('WhatsApp');
+  await expect(page.getByRole('button', { name: /All 3/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /SMS 2/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /WhatsApp 1/i })).toBeVisible();
+
+  await page.getByRole('button', { name: /WhatsApp 1/i }).click();
+  await expect(page.locator('#conversation-list .convo-item')).toHaveCount(1);
+  await expect(page.locator('#conversation-list')).toContainText('Jordan Rivera');
+});
+
+test('renders clickable links with a social preview card', async ({ page, request }) => {
+  await openConversation(page, 'Sarah Chen');
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: 'Read this example.com/story',
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+    },
+  });
+
+  const linkedMessage = page.locator('#messages-area .msg').filter({ hasText: 'example.com/story' }).last();
+  await expect(linkedMessage.locator('a.msg-link')).toHaveAttribute('href', 'https://example.com/story');
+  await expect(linkedMessage.locator('.msg-link-preview')).toContainText('Example Story');
+  await expect(linkedMessage.locator('.msg-link-preview')).toContainText('Example');
+});
+
+test('groups duplicate direct chats by person while keeping network lanes separate', async ({ page }) => {
+  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+
+  await expect(jordanCluster).toHaveCount(1);
+  await expect(jordanCluster.locator('.convo-item')).toHaveCount(2);
+  await expect(jordanCluster).toContainText('SMS');
+  await expect(jordanCluster).toContainText('WhatsApp');
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await expect(page.locator('#chat-header-name')).toHaveText('Jordan Rivera');
+  await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+});
+
+test('switches routes from the left rail while keeping the thread pane minimal', async ({ page }) => {
+  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await expect(page.locator('#compose-input')).toBeEnabled();
+  await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+  await expect(page.locator('#chat-pane')).not.toContainText('Sending via WhatsApp');
+  await expect(page.locator('#chat-pane')).not.toContainText('Replies here');
+  await expect(page.locator('#chat-pane')).not.toContainText('Reply route');
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'SMS' }).click();
+  await expect(page.locator('#chat-header-source')).toContainText('SMS');
+  await expect(page.locator('#compose-input')).toBeEnabled();
+});
+
+test('does not group same-name chats when participant identifiers differ', async ({ page }) => {
+  await expect(page.locator('#conversation-list > .contact-cluster').filter({ hasText: 'Jordan Rivera' })).toHaveCount(1);
+  await expect(page.locator('#conversation-list > .convo-item').filter({ hasText: 'Jordan Rivera' })).toHaveCount(1);
+});
+
+test('new message surfaces existing routes for the same number', async ({ page }) => {
+  await page.locator('#new-msg-btn').click();
+  await page.locator('#new-msg-phone').fill('+1 (415) 555-0199');
+
+  await expect(page.locator('#new-msg-helper')).toContainText('Choose the route you want');
+  await expect(page.locator('#new-msg-routes')).toContainText('SMS');
+  await expect(page.locator('#new-msg-routes')).toContainText('WhatsApp');
+  await expect(page.locator('#new-msg-go')).toContainText('Open SMS route');
 });
 
 test('sends a message through the compose box', async ({ page }) => {
@@ -34,6 +154,106 @@ test('sends a message through the compose box', async ({ page }) => {
   await page.locator('#send-btn').click();
 
   await expect(page.locator('#messages-area')).toContainText(outbound);
+});
+
+test('keeps the active thread pinned to the bottom after sending', async ({ page }) => {
+  const outbound = `Bottom send ${Date.now()}`;
+
+  await openConversation(page, 'Paged Thread');
+  await expect(page.locator('#messages-area .msg')).toHaveCount(100);
+  await expectThreadNearBottom(page);
+
+  await page.locator('#compose-input').fill(outbound);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#messages-area')).toContainText(outbound);
+  await expectThreadNearBottom(page);
+  await expectLastMessageVisible(page);
+});
+
+test('sends a WhatsApp text message through the compose box', async ({ page }) => {
+  const outbound = `WhatsApp outbound ${Date.now()}`;
+  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await page.locator('#compose-input').fill(outbound);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#messages-area')).toContainText(outbound);
+});
+
+test('renders read receipts for read messages', async ({ page, request }) => {
+  const outbound = `Read receipt ${Date.now()}`;
+
+  await openConversation(page, 'Sarah Chen');
+  await request.post('/_e2e/messages', {
+    data: {
+      body: outbound,
+      conversation_id: 'conv1',
+      is_from_me: true,
+      sender_name: 'Me',
+      sender_number: '+14155550000',
+      status: 'READ',
+    },
+  });
+
+  const sentMessage = page.locator('#messages-area .msg.sent').filter({ hasText: outbound }).last();
+  await expect(sentMessage.locator('.msg-status.status-read')).toBeVisible();
+});
+
+test('sends a WhatsApp image attachment through the compose box', async ({ page }) => {
+  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await page.locator('#file-input').setInputFiles({
+    name: 'wa-photo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z9wAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+
+  await expect(page.locator('#attach-preview')).toHaveClass(/active/);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#attach-preview')).not.toHaveClass(/active/);
+  await expect(page.locator('#messages-area img[src*="/api/media/"]').last()).toBeVisible();
+});
+
+test('sends a WhatsApp voice note attachment through the compose box', async ({ page }) => {
+  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+
+  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await page.locator('#file-input').setInputFiles({
+    name: 'voice-note.ogg',
+    mimeType: 'audio/ogg',
+    buffer: Buffer.from('T2dnUwACAAAAAAAAAABVDxQRAAAAAF7kK3UBHgF2b3JiaXMAAAAAAUSsAAAAAAAAgDgAAAAAAAC4AU9nZ1MAAAAAAAAAAAAAFQ8UEQEAAABxvLC3DkD/////////////////AHZvcmJpczQAAABYaXBoLk9yZwAAAAAAAAAAAAAA', 'base64'),
+  });
+
+  await expect(page.locator('#attach-preview')).toHaveClass(/active/);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#attach-preview')).not.toHaveClass(/active/);
+  await expect(page.locator('#messages-area audio[src*="/api/media/"]').last()).toBeVisible();
+});
+
+test('restores compose text when send fails', async ({ page }) => {
+  const outbound = `Send failure ${Date.now()}`;
+
+  await openConversation(page, 'Sarah Chen');
+  await page.route('**/api/send', route => route.fulfill({
+    status: 500,
+    contentType: 'text/plain',
+    body: 'local persistence failed',
+  }), { times: 1 });
+
+  await page.locator('#compose-input').fill(outbound);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#thread-feedback')).toContainText('local persistence failed');
+  await expect(page.locator('#compose-input')).toHaveValue(outbound);
+  await expect(page.locator('#messages-area')).not.toContainText(outbound);
 });
 
 test('refreshes the active thread from SSE invalidations', async ({ page, request }) => {
@@ -52,6 +272,190 @@ test('refreshes the active thread from SSE invalidations', async ({ page, reques
   await expect(page.locator('#messages-area')).toContainText(inbound);
 });
 
+test('keeps the active thread pinned to the bottom for inbound live messages', async ({ page, request }) => {
+  const inbound = `Bottom inbound ${Date.now()}`;
+
+  await openConversation(page, 'Paged Thread');
+  await expect(page.locator('#messages-area .msg')).toHaveCount(100);
+  await expectThreadNearBottom(page);
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv-paged',
+      sender_name: 'Pat Page',
+      sender_number: '+15550000001',
+    },
+  });
+
+  await expect(page.locator('#messages-area')).toContainText(inbound);
+  await expectThreadNearBottom(page);
+  await expectLastMessageVisible(page);
+});
+
+test('keeps the newest message visible when its bubble grows after render', async ({ page, request }) => {
+  const inbound = `Delayed growth ${Date.now()}`;
+
+  await openConversation(page, 'Paged Thread');
+  await expect(page.locator('#messages-area .msg')).toHaveCount(100);
+  await expectThreadNearBottom(page);
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv-paged',
+      sender_name: 'Pat Page',
+      sender_number: '+15550000001',
+    },
+  });
+
+  const newestMessage = page.locator('#messages-area .msg').filter({ hasText: inbound }).last();
+  await expect(newestMessage).toBeVisible();
+  await expectLastMessageVisible(page);
+
+  await newestMessage.evaluate((node) => {
+    const filler = document.createElement('div');
+    filler.className = 'e2e-growth-filler';
+    filler.style.height = '280px';
+    filler.style.marginTop = '12px';
+    filler.textContent = 'Expanded after render';
+    node.appendChild(filler);
+  });
+
+  await expectLastMessageVisible(page);
+  await expectThreadNearBottom(page);
+});
+
+test('keeps the newest message visible when the thread viewport shrinks', async ({ page }) => {
+  await openConversation(page, 'Paged Thread');
+  await expect(page.locator('#messages-area .msg')).toHaveCount(100);
+  await expectThreadNearBottom(page);
+  await expectLastMessageVisible(page);
+
+  await page.locator('#compose-bar').evaluate((el) => {
+    el.style.paddingBottom = '260px';
+  });
+
+  await expectLastMessageVisible(page);
+  await expectThreadNearBottom(page);
+});
+
+test('shows and clears a typing indicator from live typing events', async ({ page, request }) => {
+  await openConversation(page, 'Sarah Chen');
+
+  await request.post('/_e2e/typing', {
+    data: {
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+      typing: true,
+    },
+  });
+
+  await expect(page.locator('#chat-header-status')).toHaveText('Typing...');
+  await expect(page.locator('#chat-header-status')).toHaveClass(/typing/);
+
+  await request.post('/_e2e/typing', {
+    data: {
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+      typing: false,
+    },
+  });
+
+  await expect(page.locator('#chat-header-status')).not.toHaveText('Typing...');
+});
+
+test('shows a desktop notification for an unseen inbound message when enabled', async ({ page, request }) => {
+  const inbound = `Notification inbound ${Date.now()}`;
+
+  await page.evaluate(() => {
+    const created = [];
+    function FakeNotification(title, options = {}) {
+      created.push({ title, body: options.body || '', tag: options.tag || '' });
+      this.onclick = null;
+    }
+    FakeNotification.permission = 'default';
+    FakeNotification.requestPermission = async () => {
+      FakeNotification.permission = 'granted';
+      return 'granted';
+    };
+    window.__openMessageNotifications = created;
+    window.Notification = FakeNotification;
+  });
+
+  await page.locator('#notif-btn').click();
+  await expect(page.locator('#notif-btn')).toHaveClass(/active/);
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv2',
+      sender_name: 'Marcus Johnson',
+      sender_number: '+12125559876',
+    },
+  });
+
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(1);
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications[0]?.title || '')).toBe('Marcus Johnson');
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications[0]?.body || '')).toBe(inbound);
+});
+
+test('suppresses desktop notifications for the active visible thread', async ({ page, request }) => {
+  const inbound = `Focused thread ${Date.now()}`;
+
+  await page.evaluate(() => {
+    const created = [];
+    function FakeNotification(title, options = {}) {
+      created.push({ title, body: options.body || '', tag: options.tag || '' });
+      this.onclick = null;
+    }
+    FakeNotification.permission = 'default';
+    FakeNotification.requestPermission = async () => {
+      FakeNotification.permission = 'granted';
+      return 'granted';
+    };
+    window.__openMessageNotifications = created;
+    window.Notification = FakeNotification;
+  });
+
+  await page.locator('#notif-btn').click();
+  await openConversation(page, 'Sarah Chen');
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+    },
+  });
+
+  await expect(page.locator('#messages-area')).toContainText(inbound);
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(0);
+});
+
+test('preserves draft edits during SSE refresh', async ({ page, request }) => {
+  const editedDraft = `Edited draft ${Date.now()}`;
+  const inbound = `Draft refresh ${Date.now()}`;
+
+  await openConversation(page, 'Sarah Chen');
+  await page.locator('.draft-text').fill(editedDraft);
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+    },
+  });
+
+  await expect(page.locator('#messages-area')).toContainText(inbound);
+  await expect(page.locator('.draft-text')).toHaveValue(editedDraft);
+});
+
 test('loads older pages when scrolling up in a long thread', async ({ page }) => {
   await openConversation(page, 'Paged Thread');
   await expect(page.locator('#messages-area .msg')).toHaveCount(100);
@@ -63,13 +467,15 @@ test('loads older pages when scrolling up in a long thread', async ({ page }) =>
   });
 
   await expect(page.locator('#messages-area')).toContainText('Paged message 001');
-  await expect(page.locator('#messages-area .msg')).toHaveCount(150);
+  await expect
+    .poll(async () => page.locator('#messages-area .msg').count())
+    .toBeGreaterThanOrEqual(150);
 });
 
 test('sends an AI draft from the thread banner', async ({ page }) => {
   const draftReply = `Draft sent ${Date.now()}`;
 
-  await openConversation(page, 'Weekend Hiking Group');
+  await openConversation(page, 'Sarah Chen');
   await expect(page.locator('.draft-banner')).toHaveCount(1);
   await page.locator('.draft-text').fill(draftReply);
   await page.locator('.draft-send-btn').click();
@@ -79,7 +485,7 @@ test('sends an AI draft from the thread banner', async ({ page }) => {
 });
 
 test('discards an AI draft from the thread banner', async ({ page }) => {
-  await openConversation(page, 'Weekend Hiking Group');
+  await openConversation(page, 'Sarah Chen');
   await expect(page.locator('.draft-banner')).toHaveCount(1);
   await page.locator('.draft-discard-btn').click();
   await expect(page.locator('.draft-banner')).toHaveCount(0);
