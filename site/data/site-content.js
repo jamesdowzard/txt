@@ -1,3 +1,9 @@
+export const downloadUrl =
+  "https://github.com/MaxGhenis/openmessage/releases/latest/download/OpenMessage.dmg";
+export const repoUrl = "https://github.com/MaxGhenis/openmessage";
+export const mcpSseUrl = "http://127.0.0.1:7007/mcp/sse";
+export const claudeMcpCommand = `claude mcp add -s user --transport sse openmessage ${mcpSseUrl}`;
+
 export const productSignals = [
   {
     title: "Google Messages + WhatsApp",
@@ -44,11 +50,11 @@ export const setupColumns = [
     commands: [
       {
         label: "Download",
-        code: "https://github.com/MaxGhenis/openmessage/releases/latest/download/OpenMessage.dmg"
+        code: downloadUrl
       },
       {
         label: "Claude Code MCP",
-        code: "claude mcp add -s user --transport sse openmessage http://127.0.0.1:7007/mcp/sse"
+        code: claudeMcpCommand
       }
     ]
   },
@@ -78,7 +84,7 @@ export const aiBlocks = [
   {
     title: "Standard MCP over SSE",
     body: "OpenMessage serves a local MCP endpoint whenever the app is running, so Claude Code, Cursor, and custom agents can connect without wrappers or cloud relays.",
-    command: "http://127.0.0.1:7007/mcp/sse"
+    command: mcpSseUrl
   },
   {
     title: "Built for message operations",

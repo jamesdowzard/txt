@@ -74,7 +74,7 @@ func main() {
 		WhatsAppStatus: func() any {
 			return map[string]any{"connected": true, "paired": true}
 		},
-		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 			messageID := fmt.Sprintf("whatsapp:e2e-media-%d", nextID.Add(1))
 			now := time.Now().UnixMilli()
 			mediaStore.Store(messageID, mediaBlob{
@@ -86,12 +86,14 @@ func main() {
 				ConversationID: conversationID,
 				SenderName:     "Me",
 				SenderNumber:   "+15551234567",
+				Body:           caption,
 				TimestampMS:    now,
 				Status:         "OUTGOING_COMPLETE",
 				IsFromMe:       true,
 				MediaID:        "wa:e2e-media",
 				MimeType:       mime,
 				DecryptionKey:  "e2e",
+				ReplyToID:      replyToID,
 				SourcePlatform: "whatsapp",
 				SourceID:       strings.TrimPrefix(messageID, "whatsapp:"),
 			}, nil

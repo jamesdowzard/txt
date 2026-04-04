@@ -626,10 +626,12 @@ func (b *Bridge) SendText(conversationID, body, replyToID string) (*db.Message, 
 	}, nil
 }
 
-func (b *Bridge) SendMedia(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+func (b *Bridge) SendMedia(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 	if conversationID == "" || len(data) == 0 {
 		return nil, errors.New("conversation_id and file are required")
 	}
+	caption = strings.TrimSpace(caption)
+	replyToID = normalizeReplyToID(replyToID)
 	chatJID, err := parseConversationJID(conversationID)
 	if err != nil {
 		return nil, err
@@ -639,20 +641,28 @@ func (b *Bridge) SendMedia(conversationID string, data []byte, filename, mime st
 		return nil, err
 	}
 
-	cli, err := b.ensureSendClient(20*time.Second, "reconnecting WhatsApp before media send")
+	cli, err := b.ensureSendClient(30*time.Second, "reconnecting WhatsApp before media send")
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	uploadCtx, cancelUpload := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancelUpload()
 
-	upload, err := uploadMedia(cli, ctx, data, mediaType)
+	upload, err := uploadMedia(cli, uploadCtx, data, mediaType)
 	if err != nil {
+		if shouldReconnectWhatsAppSend(err) {
+			if reconnectErr := b.beginReconnect("WhatsApp media upload timed out; reconnecting", true); reconnectErr != nil {
+				b.logger.Debug().Err(reconnectErr).Msg("Failed to start WhatsApp reconnect after media upload error")
+			}
+		}
 		return nil, fmt.Errorf("upload WhatsApp media: %w", err)
 	}
 	reqID := cli.GenerateMessageID()
-	resp, err := sendTextMessage(cli, ctx, chatJID, outgoingMediaMessage(upload, mime, filename, mediaType), whatsmeow.SendRequestExtra{
+	sendCtx, cancelSend := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancelSend()
+
+	resp, err := sendTextMessage(cli, sendCtx, chatJID, outgoingMediaMessage(upload, mime, filename, mediaType, caption, replyToID), whatsmeow.SendRequestExtra{
 		ID: reqID,
 	})
 	if err != nil {
@@ -689,13 +699,14 @@ func (b *Bridge) SendMedia(conversationID string, data []byte, filename, mime st
 		ConversationID: conversationID,
 		SenderName:     senderName,
 		SenderNumber:   senderNumber,
-		Body:           "",
+		Body:           caption,
 		TimestampMS:    now,
 		Status:         "sent",
 		IsFromMe:       true,
 		MediaID:        encodeStoredMediaRef(storedMediaRefFromUpload(upload)),
 		MimeType:       mime,
 		DecryptionKey:  encodeBytes(upload.MediaKey),
+		ReplyToID:      replyToID,
 		SourcePlatform: "whatsapp",
 		SourceID:       messageID,
 	}, nil
@@ -1813,30 +1824,35 @@ func mediaTypeForMIME(mime string) (whatsmeow.MediaType, error) {
 	}
 }
 
-func outgoingMediaMessage(upload whatsmeow.UploadResponse, mime, filename string, mediaType whatsmeow.MediaType) *waE2E.Message {
+func outgoingMediaMessage(upload whatsmeow.UploadResponse, mime, filename string, mediaType whatsmeow.MediaType, caption, replyToID string) *waE2E.Message {
+	contextInfo := outgoingReplyContext(replyToID)
 	switch mediaType {
 	case whatsmeow.MediaImage:
 		return &waE2E.Message{
 			ImageMessage: &waE2E.ImageMessage{
 				Mimetype:      proto.String(mime),
+				Caption:       optionalProtoString(caption),
 				URL:           proto.String(upload.URL),
 				DirectPath:    proto.String(upload.DirectPath),
 				MediaKey:      upload.MediaKey,
 				FileEncSHA256: upload.FileEncSHA256,
 				FileSHA256:    upload.FileSHA256,
 				FileLength:    proto.Uint64(upload.FileLength),
+				ContextInfo:   contextInfo,
 			},
 		}
 	case whatsmeow.MediaVideo:
 		return &waE2E.Message{
 			VideoMessage: &waE2E.VideoMessage{
 				Mimetype:      proto.String(mime),
+				Caption:       optionalProtoString(caption),
 				URL:           proto.String(upload.URL),
 				DirectPath:    proto.String(upload.DirectPath),
 				MediaKey:      upload.MediaKey,
 				FileEncSHA256: upload.FileEncSHA256,
 				FileSHA256:    upload.FileSHA256,
 				FileLength:    proto.Uint64(upload.FileLength),
+				ContextInfo:   contextInfo,
 			},
 		}
 	case whatsmeow.MediaAudio:
@@ -1849,6 +1865,7 @@ func outgoingMediaMessage(upload whatsmeow.UploadResponse, mime, filename string
 				FileEncSHA256: upload.FileEncSHA256,
 				FileSHA256:    upload.FileSHA256,
 				FileLength:    proto.Uint64(upload.FileLength),
+				ContextInfo:   contextInfo,
 			},
 		}
 	default:
@@ -1859,6 +1876,7 @@ func outgoingMediaMessage(upload whatsmeow.UploadResponse, mime, filename string
 		return &waE2E.Message{
 			DocumentMessage: &waE2E.DocumentMessage{
 				Mimetype:      proto.String(mime),
+				Caption:       optionalProtoString(caption),
 				FileName:      proto.String(displayName),
 				Title:         proto.String(displayName),
 				URL:           proto.String(upload.URL),
@@ -1867,6 +1885,7 @@ func outgoingMediaMessage(upload whatsmeow.UploadResponse, mime, filename string
 				FileEncSHA256: upload.FileEncSHA256,
 				FileSHA256:    upload.FileSHA256,
 				FileLength:    proto.Uint64(upload.FileLength),
+				ContextInfo:   contextInfo,
 			},
 		}
 	}
@@ -1958,17 +1977,33 @@ func normalizeReplyToID(replyToID string) string {
 	return "whatsapp:" + strings.TrimPrefix(replyToID, "whatsapp:")
 }
 
-func outgoingTextMessage(body, replyToID string) *waE2E.Message {
+func optionalProtoString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return proto.String(value)
+}
+
+func outgoingReplyContext(replyToID string) *waE2E.ContextInfo {
 	replyToID = normalizeReplyToID(replyToID)
 	if replyToID == "" {
+		return nil
+	}
+	return &waE2E.ContextInfo{
+		StanzaID: proto.String(strings.TrimPrefix(replyToID, "whatsapp:")),
+	}
+}
+
+func outgoingTextMessage(body, replyToID string) *waE2E.Message {
+	contextInfo := outgoingReplyContext(replyToID)
+	if contextInfo == nil {
 		return &waE2E.Message{Conversation: proto.String(body)}
 	}
 	return &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(body),
-			ContextInfo: &waE2E.ContextInfo{
-				StanzaID: proto.String(strings.TrimPrefix(replyToID, "whatsapp:")),
-			},
+			ContextInfo: contextInfo,
 		},
 	}
 }

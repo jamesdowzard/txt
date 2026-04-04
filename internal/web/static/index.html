@@ -5675,6 +5675,7 @@ body::after {
     }
     const canSendText = conversationSupportsOutbound(activeConversation);
     const canSendMedia = conversationSupportsMediaOutbound(activeConversation);
+    const activePlatform = sourcePlatformOf(activeConversation);
     if ($composeInput.value.trim() && !canSendText) {
       showThreadFeedback(routeUnavailableMessage('reply', activeConversation));
       return;
@@ -5686,6 +5687,9 @@ body::after {
     const text = $composeInput.value.trim();
     const originalText = $composeInput.value;
     const hasMedia = !!pendingFile;
+    const sendsCaptionedWhatsAppMedia = hasMedia
+      && activePlatform === 'whatsapp'
+      && !(pendingFile.file?.type || '').startsWith('audio/');
     if ((!text && !hasMedia) || !activeConvoId) return;
 
     clearThreadFeedback();
@@ -5711,11 +5715,17 @@ body::after {
         const form = new FormData();
         form.append('conversation_id', activeConvoId);
         form.append('file', pendingFile.file);
+        if (activePlatform === 'whatsapp' && replyToMsg) {
+          form.append('reply_to_id', replyToMsg.MessageID);
+        }
+        if (sendsCaptionedWhatsAppMedia && text) {
+          form.append('caption', text);
+        }
         const resp = await fetch('/api/send-media', { method: 'POST', body: form });
         if (!resp.ok) throw new Error(await resp.text());
         clearAttachment();
       }
-      if (text) {
+      if (text && !sendsCaptionedWhatsAppMedia) {
         const payload = {
           conversation_id: activeConvoId,
           message: text,

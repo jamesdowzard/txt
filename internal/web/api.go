@@ -53,7 +53,7 @@ type APIOptions struct {
 	WhatsAppAvatar        func(conversationID string) ([]byte, string, error)
 	FetchLinkPreview      LinkPreviewFetcher
 	SendWhatsAppText      func(conversationID, body, replyToID string) (*db.Message, error)
-	SendWhatsAppMedia     func(conversationID string, data []byte, filename, mime string) (*db.Message, error)
+	SendWhatsAppMedia     func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error)
 	DownloadWhatsAppMedia func(msg *db.Message) ([]byte, string, error)
 	StartDeepBackfill     func() bool
 	BackfillStatus        func() any         // returns a JSON-serializable backfill progress snapshot
@@ -203,11 +203,11 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 		return msg, nil
 	}
-	sendWhatsAppMedia := func(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+	sendWhatsAppMedia := func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 		if opts.SendWhatsAppMedia == nil {
 			return nil, errWhatsAppMediaUnavailable
 		}
-		msg, err := opts.SendWhatsAppMedia(conversationID, data, filename, mime)
+		msg, err := opts.SendWhatsAppMedia(conversationID, data, filename, mime, caption, replyToID)
 		if err != nil {
 			return nil, err
 		}
@@ -487,6 +487,8 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 
 		convID := r.FormValue("conversation_id")
+		caption := strings.TrimSpace(r.FormValue("caption"))
+		replyToID := strings.TrimSpace(r.FormValue("reply_to_id"))
 		if convID == "" {
 			httpError(w, "conversation_id is required", 400)
 			return
@@ -510,7 +512,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			mime = "application/octet-stream"
 		}
 		if isWhatsAppConversation(convID) {
-			msg, err := sendWhatsAppMedia(convID, data, header.Filename, mime)
+			msg, err := sendWhatsAppMedia(convID, data, header.Filename, mime, caption, replyToID)
 			switch {
 			case errors.Is(err, errWhatsAppMediaUnavailable):
 				httpError(w, err.Error(), 501)

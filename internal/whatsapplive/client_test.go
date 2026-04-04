@@ -334,6 +334,63 @@ func TestBridgeSendTextTimeoutStartsReconnect(t *testing.T) {
 	}
 }
 
+func TestBridgeSendMediaUploadTimeoutStartsReconnect(t *testing.T) {
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	bridge := &Bridge{
+		connected: true,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID:       &ownJID,
+				PushName: "OpenMessage",
+			},
+		},
+	}
+
+	originalUpload := uploadMedia
+	originalConnect := connectClient
+	originalIsConnected := clientIsConnected
+	originalLaunch := launchConnect
+	defer func() {
+		uploadMedia = originalUpload
+		connectClient = originalConnect
+		clientIsConnected = originalIsConnected
+		launchConnect = originalLaunch
+	}()
+
+	reconnectStarted := make(chan struct{}, 1)
+	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
+	launchConnect = func(b *Bridge, cli *whatsmeow.Client) {
+		b.runConnect(cli)
+	}
+	connectClient = func(_ *whatsmeow.Client) error {
+		select {
+		case reconnectStarted <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	uploadMedia = func(_ *whatsmeow.Client, _ context.Context, _ []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+		return whatsmeow.UploadResponse{}, context.DeadlineExceeded
+	}
+
+	_, err := bridge.SendMedia("whatsapp:15551234567@s.whatsapp.net", []byte("png-bytes"), "photo.png", "image/png", "", "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SendMedia() error = %v, want context deadline exceeded", err)
+	}
+	select {
+	case <-reconnectStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected reconnect to start after media upload timeout")
+	}
+	status := bridge.Status()
+	if !status.Connecting {
+		t.Fatal("expected bridge to report reconnecting after media upload timeout")
+	}
+	if status.Connected {
+		t.Fatal("did not expect bridge to remain connected after media upload timeout")
+	}
+}
+
 func TestBridgeProfilePhotoFetchesAndCachesAvatar(t *testing.T) {
 	bridge := &Bridge{
 		connected: true,
@@ -935,7 +992,9 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppMessage(t *testing.T) {
 	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
 
 	var capturedType whatsmeow.MediaType
-	uploadMedia = func(_ *whatsmeow.Client, _ context.Context, plaintext []byte, mediaType whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	var uploadCtx context.Context
+	uploadMedia = func(_ *whatsmeow.Client, ctx context.Context, plaintext []byte, mediaType whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+		uploadCtx = ctx
 		capturedType = mediaType
 		if !bytes.Equal(plaintext, []byte("png-bytes")) {
 			t.Fatalf("upload bytes = %q, want png-bytes", string(plaintext))
@@ -953,7 +1012,9 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppMessage(t *testing.T) {
 	var capturedTo watypes.JID
 	var capturedMsg *waE2E.Message
 	var capturedID string
-	sendTextMessage = func(_ *whatsmeow.Client, _ context.Context, to watypes.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	var sendCtx context.Context
+	sendTextMessage = func(_ *whatsmeow.Client, ctx context.Context, to watypes.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+		sendCtx = ctx
 		capturedTo = to
 		capturedMsg = message
 		if len(extra) > 0 {
@@ -965,7 +1026,7 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppMessage(t *testing.T) {
 		}, nil
 	}
 
-	msg, err := bridge.SendMedia("whatsapp:15551234567@s.whatsapp.net", []byte("png-bytes"), "photo.png", "image/png")
+	msg, err := bridge.SendMedia("whatsapp:15551234567@s.whatsapp.net", []byte("png-bytes"), "photo.png", "image/png", "check this out", "whatsapp:reply-123")
 	if err != nil {
 		t.Fatalf("SendMedia(): %v", err)
 	}
@@ -980,6 +1041,12 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppMessage(t *testing.T) {
 	if image == nil {
 		t.Fatal("expected WhatsApp image message")
 	}
+	if image.GetCaption() != "check this out" {
+		t.Fatalf("caption = %q, want check this out", image.GetCaption())
+	}
+	if image.GetContextInfo().GetStanzaID() != "reply-123" {
+		t.Fatalf("reply stanza = %q, want reply-123", image.GetContextInfo().GetStanzaID())
+	}
 	if image.GetMimetype() != "image/png" {
 		t.Fatalf("mime = %q, want image/png", image.GetMimetype())
 	}
@@ -989,11 +1056,23 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppMessage(t *testing.T) {
 	if capturedID == "" {
 		t.Fatal("expected generated WhatsApp media message id")
 	}
+	if uploadCtx == nil || sendCtx == nil {
+		t.Fatal("expected upload and send contexts to be captured")
+	}
+	if uploadCtx == sendCtx {
+		t.Fatal("expected upload and send to use separate contexts")
+	}
 	if msg.MessageID != "whatsapp:"+capturedID {
 		t.Fatalf("message id = %q, want whatsapp:%s", msg.MessageID, capturedID)
 	}
 	if msg.MimeType != "image/png" {
 		t.Fatalf("stored mime = %q, want image/png", msg.MimeType)
+	}
+	if msg.Body != "check this out" {
+		t.Fatalf("stored body = %q, want check this out", msg.Body)
+	}
+	if msg.ReplyToID != "whatsapp:reply-123" {
+		t.Fatalf("stored reply_to_id = %q, want whatsapp:reply-123", msg.ReplyToID)
 	}
 	if msg.DecryptionKey != "0102" {
 		t.Fatalf("stored media key = %q, want 0102", msg.DecryptionKey)
@@ -1060,7 +1139,7 @@ func TestBridgeSendMediaBuildsOutgoingWhatsAppAudioMessage(t *testing.T) {
 		}, nil
 	}
 
-	msg, err := bridge.SendMedia("whatsapp:15551234567@s.whatsapp.net", []byte("ogg-bytes"), "voice-note.ogg", "audio/ogg")
+	msg, err := bridge.SendMedia("whatsapp:15551234567@s.whatsapp.net", []byte("ogg-bytes"), "voice-note.ogg", "audio/ogg", "", "")
 	if err != nil {
 		t.Fatalf("SendMedia(audio): %v", err)
 	}

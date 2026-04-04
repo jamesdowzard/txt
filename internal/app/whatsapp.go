@@ -106,12 +106,12 @@ func (a *App) SendWhatsAppText(conversationID, body, replyToID string) (*db.Mess
 	return bridge.SendText(conversationID, body, replyToID)
 }
 
-func (a *App) SendWhatsAppMedia(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+func (a *App) SendWhatsAppMedia(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 	bridge, err := a.ensureWhatsApp()
 	if err != nil {
 		return nil, fmt.Errorf("init WhatsApp bridge: %w", err)
 	}
-	return bridge.SendMedia(conversationID, data, filename, mime)
+	return bridge.SendMedia(conversationID, data, filename, mime, caption, replyToID)
 }
 
 func (a *App) DownloadWhatsAppMedia(msg *db.Message) ([]byte, string, error) {

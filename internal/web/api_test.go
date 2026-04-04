@@ -557,23 +557,27 @@ func TestSendDraftUsesWhatsAppSender(t *testing.T) {
 }
 
 func TestSendMediaUsesWhatsAppSender(t *testing.T) {
-	var gotConversationID, gotFilename, gotMIME string
+	var gotConversationID, gotFilename, gotMIME, gotCaption, gotReplyToID string
 	var gotData []byte
 	ts := newTestServerWithOptions(t, APIOptions{
-		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime string) (*db.Message, error) {
+		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 			gotConversationID = conversationID
 			gotFilename = filename
 			gotMIME = mime
+			gotCaption = caption
+			gotReplyToID = replyToID
 			gotData = append([]byte(nil), data...)
 			return &db.Message{
 				MessageID:      "whatsapp:media-1",
 				ConversationID: conversationID,
+				Body:           caption,
 				IsFromMe:       true,
 				TimestampMS:    1234,
 				Status:         "OUTGOING_SENDING",
 				MediaID:        "wa:test-ref",
 				MimeType:       mime,
 				DecryptionKey:  "deadbeef",
+				ReplyToID:      replyToID,
 				SourcePlatform: "whatsapp",
 				SourceID:       "media-1",
 			}, nil
@@ -591,6 +595,12 @@ func TestSendMediaUsesWhatsAppSender(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if err := writer.WriteField("conversation_id", "whatsapp:15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("caption", "check this out"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("reply_to_id", "whatsapp:reply-1"); err != nil {
 		t.Fatal(err)
 	}
 	part, err := writer.CreateFormFile("file", "photo.png")
@@ -628,6 +638,12 @@ func TestSendMediaUsesWhatsAppSender(t *testing.T) {
 	if gotMIME != "application/octet-stream" {
 		t.Fatalf("mime = %q, want application/octet-stream", gotMIME)
 	}
+	if gotCaption != "check this out" {
+		t.Fatalf("caption = %q, want check this out", gotCaption)
+	}
+	if gotReplyToID != "whatsapp:reply-1" {
+		t.Fatalf("reply_to_id = %q, want whatsapp:reply-1", gotReplyToID)
+	}
 	if string(gotData) != "png-bytes" {
 		t.Fatalf("data = %q, want png-bytes", string(gotData))
 	}
@@ -644,6 +660,12 @@ func TestSendMediaUsesWhatsAppSender(t *testing.T) {
 	}
 	if msgs[0].MediaID != "wa:test-ref" {
 		t.Fatalf("media_id = %q, want wa:test-ref", msgs[0].MediaID)
+	}
+	if msgs[0].Body != "check this out" {
+		t.Fatalf("body = %q, want check this out", msgs[0].Body)
+	}
+	if msgs[0].ReplyToID != "whatsapp:reply-1" {
+		t.Fatalf("reply_to_id = %q, want whatsapp:reply-1", msgs[0].ReplyToID)
 	}
 	if msgs[0].MimeType != "application/octet-stream" {
 		t.Fatalf("mime_type = %q, want application/octet-stream", msgs[0].MimeType)

@@ -1,3 +1,5 @@
+import { repoUrl } from "../data/site-content";
+
 export function SiteFooter() {
   return (
     <footer className="border-t border-[var(--border)]">
@@ -12,7 +14,7 @@ export function SiteFooter() {
           </a>
           <a
             className="transition-colors hover:text-[var(--text-primary)]"
-            href="https://github.com/MaxGhenis/openmessage"
+            href={repoUrl}
             target="_blank"
             rel="noreferrer"
           >
