@@ -241,6 +241,60 @@ func TestSendMessageNotConnected(t *testing.T) {
 	}
 }
 
+func TestSendToConversationValidation(t *testing.T) {
+	a := testApp(t)
+	handler := sendToConversationHandler(a)
+	req := mcp.CallToolRequest{}
+
+	req.Params.Arguments = map[string]any{"message": "Hello"}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for missing conversation_id")
+	}
+
+	req.Params.Arguments = map[string]any{"conversation_id": "c1"}
+	result, err = handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for missing message")
+	}
+}
+
+func TestSendToConversationNotConnected(t *testing.T) {
+	a := testApp(t)
+	if err := a.Store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "Alice",
+		LastMessageTS:  time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+
+	handler := sendToConversationHandler(a)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"conversation_id": "c1",
+		"message":         "Hello",
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error when not connected")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "not connected") {
+		t.Fatalf("expected not connected error, got: %s", text)
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	a := testApp(t)
 
@@ -549,5 +603,4 @@ func TestSendGroupMessageTooFewNumbers(t *testing.T) {
 		t.Errorf("expected 'at least 2' error, got: %s", text)
 	}
 }
-
 

@@ -25,7 +25,15 @@ go build -o openmessage .
 ./openmessage pair
 ```
 
-A QR code appears in your terminal. On your phone, open **Google Messages > Settings > Device pairing > Pair a device** and scan it. The session saves to `~/.local/share/openmessage/session.json`.
+By default, a QR code appears in your terminal. On your phone, open **Google Messages > Settings > Device pairing > Pair a device** and scan it. The session saves to `~/.local/share/openmessage/session.json`.
+
+If Google only offers account pairing, you can also pair with Google account cookies copied from browser devtools:
+
+```bash
+pbpaste | ./openmessage pair --google
+```
+
+The CLI accepts either a JSON cookie object or a full `curl` command for `messages.google.com/web/config`, then prompts you to confirm an emoji on your phone.
 
 ### 3. Start the server
 
@@ -54,7 +62,7 @@ Add to `~/.mcp.json`:
 }
 ```
 
-Restart Claude Code. The 7 tools appear automatically.
+Restart Claude Code. The MCP tools appear automatically.
 
 ## Features
 
@@ -64,7 +72,7 @@ Restart Claude Code. The 7 tools appear automatically.
 - **React to messages** — emoji reactions on any message
 - **Image/media display** — inline images with fullscreen viewer
 - **Web UI** — real-time conversation view at localhost:7007
-- **MCP tools** — 7 tools for Claude Code integration
+- **MCP tools** — conversation lookup, direct replies, media download, import helpers, and story/viz tools for Claude Code integration
 - **Local storage** — SQLite database, your data stays on your machine
 
 ## MCP tools
@@ -75,6 +83,7 @@ Restart Claude Code. The 7 tools appear automatically.
 | `get_conversation` | Messages in a specific conversation |
 | `search_messages` | Full-text search across all messages |
 | `send_message` | Send SMS/RCS to a phone number |
+| `send_to_conversation` | Send a text reply directly to an existing conversation ID |
 | `list_conversations` | List recent conversations |
 | `list_contacts` | List/search contacts |
 | `get_status` | Connection status and paired phone info |

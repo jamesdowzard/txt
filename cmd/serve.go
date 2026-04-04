@@ -56,8 +56,10 @@ func RunServe(logger zerolog.Logger) error {
 	}
 	a.OnIncomingMessage = macNotifier.NotifyIncomingMessage
 
+	isDemo := os.Getenv("OPENMESSAGES_DEMO") != ""
+
 	// Connect to Google Messages (skip in demo mode)
-	if os.Getenv("OPENMESSAGES_DEMO") == "" {
+	if !isDemo {
 		if err := a.LoadAndConnect(); err != nil {
 			return fmt.Errorf("connect: %w", err)
 		}
@@ -96,7 +98,7 @@ func RunServe(logger zerolog.Logger) error {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
 
-	if os.Getenv("OPENMESSAGES_DEMO") == "" {
+	if !isDemo {
 		if err := a.LoadAndConnectWhatsApp(); err != nil {
 			logger.Warn().Err(err).Msg("WhatsApp live bridge unavailable")
 		}
@@ -104,7 +106,7 @@ func RunServe(logger zerolog.Logger) error {
 		logger.Info().Msg("Demo mode — skipping WhatsApp live bridge")
 	}
 
-	if os.Getenv("OPENMESSAGES_DEMO") == "" {
+	if !isDemo {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
@@ -124,6 +126,9 @@ func RunServe(logger zerolog.Logger) error {
 	identityName := app.LocalIdentityName()
 	lastImportErr := map[string]string{}
 	syncLocalPlatforms := func() {
+		if app.Sandboxed() || isDemo {
+			return
+		}
 		changed := false
 		syncPlatform := func(platform, successMsg string, importFromDB func(*db.Store) (*importer.ImportResult, error)) {
 			result, err := importFromDB(a.Store)
@@ -181,11 +186,24 @@ func RunServe(logger zerolog.Logger) error {
 		mcpserver.WithStaticBasePath("/mcp"),
 	)
 
+	isConnected := func() bool {
+		if isDemo {
+			return true
+		}
+		return a.Connected.Load()
+	}
+	googleStatus := func() any {
+		if isDemo {
+			return app.GoogleStatusSnapshot{Connected: true, Paired: true, NeedsPairing: false}
+		}
+		return a.GoogleStatus()
+	}
+
 	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, web.APIOptions{
 		Client:          a.GetClient,
 		Events:          events,
-		IsConnected:     func() bool { return a.Connected.Load() },
-		GoogleStatus:    func() any { return a.GoogleStatus() },
+		IsConnected:     isConnected,
+		GoogleStatus:    googleStatus,
 		ReconnectGoogle: a.ReconnectGoogleMessages,
 		Unpair:          a.Unpair,
 		WhatsAppStatus:  func() any { return a.WhatsAppStatus() },

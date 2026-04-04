@@ -42,11 +42,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/openmessage",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/openmessage-helper",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"\nROOT_DIR=\"${PROJECT_DIR}/..\"\nBUILD_DIR=\"${DERIVED_FILE_DIR}/openmessage-backend\"\nOUTPUT_PATH=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/openmessage\"\nmkdir -p \"$BUILD_DIR\" \"$(dirname \"$OUTPUT_PATH\")\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-arm64\" \"$ROOT_DIR\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-amd64\" \"$ROOT_DIR\"\nlipo -create -output \"$OUTPUT_PATH\" \"$BUILD_DIR/openmessage-arm64\" \"$BUILD_DIR/openmessage-amd64\"\nchmod +x \"$OUTPUT_PATH\"\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" = \"YES\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  if [ -n \"${CODE_SIGN_ENTITLEMENTS:-}\" ]; then\n    ENTITLEMENTS_PATH=\"${PROJECT_DIR}/${CODE_SIGN_ENTITLEMENTS}\"\n    if [ -f \"$ENTITLEMENTS_PATH\" ]; then\n      codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --entitlements \"$ENTITLEMENTS_PATH\" \"$OUTPUT_PATH\"\n    else\n      codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$OUTPUT_PATH\"\n    fi\n  else\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$OUTPUT_PATH\"\n  fi\nfi\n";
+			shellScript = "set -euo pipefail\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"\nROOT_DIR=\"${PROJECT_DIR}/..\"\nBUILD_DIR=\"${DERIVED_FILE_DIR}/openmessage-backend\"\nOUTPUT_PATH=\"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/openmessage-helper\"\nHELPER_ENTITLEMENTS=\"${PROJECT_DIR}/../macos/OpenMessageHelper.entitlements\"\nmkdir -p \"$BUILD_DIR\" \"$(dirname \"$OUTPUT_PATH\")\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-arm64\" \"$ROOT_DIR\"\nCGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags=\"-s -w\" -o \"$BUILD_DIR/openmessage-amd64\" \"$ROOT_DIR\"\nlipo -create -output \"$OUTPUT_PATH\" \"$BUILD_DIR/openmessage-arm64\" \"$BUILD_DIR/openmessage-amd64\"\nchmod +x \"$OUTPUT_PATH\"\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" = \"YES\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  if [ -f \"$HELPER_ENTITLEMENTS\" ]; then\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier \"${PRODUCT_BUNDLE_IDENTIFIER}.backend\" --timestamp=none --entitlements \"$HELPER_ENTITLEMENTS\" \"$OUTPUT_PATH\"\n  else\n    codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier \"${PRODUCT_BUNDLE_IDENTIFIER}.backend\" --timestamp=none \"$OUTPUT_PATH\"\n  fi\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -274,7 +274,7 @@
 				CODE_SIGN_ENTITLEMENTS = ../macos/OpenMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -308,7 +308,7 @@
 				CODE_SIGN_ENTITLEMENTS = ../macos/OpenMessages.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;

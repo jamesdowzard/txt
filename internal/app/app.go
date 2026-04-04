@@ -132,9 +132,10 @@ type App struct {
 }
 
 type GoogleStatusSnapshot struct {
-	Connected bool   `json:"connected"`
-	Paired    bool   `json:"paired"`
-	LastError string `json:"last_error,omitempty"`
+	Connected    bool   `json:"connected"`
+	Paired       bool   `json:"paired"`
+	NeedsPairing bool   `json:"needs_pairing"`
+	LastError    string `json:"last_error,omitempty"`
 }
 
 func DefaultDataDir() string {
@@ -179,13 +180,15 @@ func New(logger zerolog.Logger) (*App, error) {
 				Msg("Legacy WhatsApp media placeholders remain without downloadable metadata")
 		}
 	}
-	if mediaRepair, err := (&importer.WhatsAppNative{}).RepairLegacyMediaPlaceholders(store); err != nil {
-		logger.Warn().Err(err).Msg("Failed to repair legacy WhatsApp media placeholders")
-	} else if mediaRepair.MessagesRepaired > 0 {
-		logger.Info().
-			Int("repaired", mediaRepair.MessagesRepaired).
-			Int("skipped", mediaRepair.MessagesSkipped).
-			Msg("Repaired legacy WhatsApp media placeholders from local desktop store")
+	if !Sandboxed() {
+		if mediaRepair, err := (&importer.WhatsAppNative{}).RepairLegacyMediaPlaceholders(store); err != nil {
+			logger.Warn().Err(err).Msg("Failed to repair legacy WhatsApp media placeholders")
+		} else if mediaRepair.MessagesRepaired > 0 {
+			logger.Info().
+				Int("repaired", mediaRepair.MessagesRepaired).
+				Int("skipped", mediaRepair.MessagesSkipped).
+				Msg("Repaired legacy WhatsApp media placeholders from local desktop store")
+		}
 	}
 
 	// Seed demo data
@@ -223,6 +226,11 @@ func LocalIdentityName() string {
 		}
 	}
 	return "Me"
+}
+
+func Sandboxed() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("OPENMESSAGES_APP_SANDBOX")), "1") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("OPENMESSAGES_APP_SANDBOX")), "true")
 }
 
 func (a *App) GetClient() *client.Client {
@@ -270,7 +278,10 @@ func (a *App) LoadAndConnect() error {
 		OnDisconnect: func() {
 			a.Connected.Store(false)
 			a.setClient(nil)
-			a.setGoogleLastError("Disconnected from Google Messages")
+			if err := os.Remove(a.SessionPath); err != nil && !os.IsNotExist(err) {
+				a.Logger.Warn().Err(err).Msg("Failed to remove invalidated Google Messages session")
+			}
+			a.setGoogleLastError("Google Messages session invalidated; pair again")
 			a.emitStatusChange(false)
 			a.Logger.Warn().Msg("Disconnected from Google Messages")
 		},
@@ -365,9 +376,10 @@ func (a *App) GoogleStatus() GoogleStatusSnapshot {
 	lastError := a.googleLastError
 	a.statusMu.Unlock()
 	return GoogleStatusSnapshot{
-		Connected: a.Connected.Load(),
-		Paired:    a.GooglePaired(),
-		LastError: lastError,
+		Connected:    a.Connected.Load(),
+		Paired:       a.GooglePaired(),
+		NeedsPairing: !a.Connected.Load() && !a.GooglePaired(),
+		LastError:    lastError,
 	}
 }
 

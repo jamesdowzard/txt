@@ -1,4 +1,5 @@
 {
-  "outputDirectory": "site",
+  "buildCommand": "cd site && bun install && bun run build",
+  "outputDirectory": "site/out",
   "cleanUrls": true
 }

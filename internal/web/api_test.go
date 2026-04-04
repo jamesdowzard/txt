@@ -793,9 +793,10 @@ func TestGetStatusIncludesGoogleSnapshot(t *testing.T) {
 	ts := newTestServerWithOptions(t, APIOptions{
 		GoogleStatus: func() any {
 			return map[string]any{
-				"connected": false,
-				"paired":    true,
-				"last_error": "Disconnected from Google Messages",
+				"connected":     false,
+				"paired":        true,
+				"needs_pairing": false,
+				"last_error":    "Disconnected from Google Messages",
 			}
 		},
 	})
@@ -814,7 +815,7 @@ func TestGetStatusIncludesGoogleSnapshot(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected google status object, got %#v", status["google"])
 	}
-	if google["paired"] != true {
+	if google["paired"] != true || google["needs_pairing"] != false {
 		t.Fatalf("unexpected google payload: %#v", google)
 	}
 }
@@ -822,7 +823,7 @@ func TestGetStatusIncludesGoogleSnapshot(t *testing.T) {
 func TestDiagnosticsEndpointIncludesCountsAndStatus(t *testing.T) {
 	ts := newTestServerWithOptions(t, APIOptions{
 		GoogleStatus: func() any {
-			return map[string]any{"connected": true, "paired": true}
+			return map[string]any{"connected": true, "paired": true, "needs_pairing": false}
 		},
 		WhatsAppStatus: func() any {
 			return map[string]any{"connected": false, "paired": true}

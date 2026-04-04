@@ -4,14 +4,8 @@ import WebKit
 
 struct ContentView: View {
     @ObservedObject var backend: BackendManager
-    @StateObject private var notifications: NotificationManager
-    @StateObject private var contacts: ContactsManager
-
-    init(backend: BackendManager) {
-        self._backend = ObservedObject(wrappedValue: backend)
-        self._notifications = StateObject(wrappedValue: NotificationManager(baseURL: backend.baseURL))
-        self._contacts = StateObject(wrappedValue: ContactsManager())
-    }
+    @ObservedObject var notifications: NotificationManager
+    @ObservedObject var contacts: ContactsManager
 
     var body: some View {
         ZStack {
@@ -29,12 +23,16 @@ struct ContentView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             backend.start()
+            notifications.start()
         }
         .onChange(of: backend.state) { _, newState in
-            if newState == .running {
+            switch newState {
+            case .running:
                 notifications.start()
-            } else {
+            case .stopped, .needsPairing, .error:
                 notifications.stop()
+            case .starting:
+                break
             }
         }
     }

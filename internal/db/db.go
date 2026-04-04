@@ -134,6 +134,25 @@ INSERT OR IGNORE INTO messages VALUES('m7b','conv7','Me','+15551234567','Anytime
 INSERT OR IGNORE INTO messages VALUES('m8a','conv8','Alex Thompson','+17185552222','Found that restaurant we were talking about - it is called Nopa',1738929600000,'delivered',0,'','','','','','sms','');
 INSERT OR IGNORE INTO messages VALUES('m8b','conv8','Me','+15551234567','Nice find! Let us go next week',1738936800000,'delivered',1,'','','','','','sms','');
 
+INSERT OR IGNORE INTO conversations VALUES('wa1','Jordan Rivera',0,'[{"name":"Jordan Rivera","number":"+14699991654"}]',1738959600000,0,'whatsapp');
+INSERT OR IGNORE INTO conversations VALUES('conv9','Jordan Rivera',0,'[{"name":"Jordan Rivera","number":"+14699991654"}]',1738959000000,0,'sms');
+INSERT OR IGNORE INTO conversations VALUES('wa2','Weekend Plans',1,'[{"name":"Mia Torres","number":"+12025557777"},{"name":"Noah Patel","number":"+13105558888"}]',1738957200000,0,'whatsapp');
+INSERT OR IGNORE INTO conversations VALUES('wa3','Mia Torres',0,'[{"name":"Mia Torres","number":"+12025557777"}]',1738950000000,0,'whatsapp');
+
+INSERT OR IGNORE INTO messages VALUES('wa1a','wa1','Jordan Rivera','+14699991654','Sent the menu here too in case WhatsApp is easier',1738955400000,'delivered',0,'','','','','','whatsapp','');
+INSERT OR IGNORE INTO messages VALUES('wa1b','wa1','Jordan Rivera','+14699991654','Also, do you want me to bring dessert?',1738959600000,'delivered',0,'','','','','','whatsapp','');
+
+INSERT OR IGNORE INTO messages VALUES('m9a','conv9','Jordan Rivera','+14699991654','Hey are you coming to dinner tonight?',1738951200000,'delivered',0,'','','','','','sms','');
+INSERT OR IGNORE INTO messages VALUES('m9b','conv9','Me','+15551234567','Yes! Running a bit late though, 15 min',1738953000000,'delivered',1,'','','','','','sms','');
+INSERT OR IGNORE INTO messages VALUES('m9c','conv9','Jordan Rivera','+14699991654','No rush, we just got a table',1738959000000,'delivered',0,'','','','','','sms','');
+
+INSERT OR IGNORE INTO messages VALUES('wa2a','wa2','Mia Torres','+12025557777','Should we do brunch or dinner Saturday?',1738951200000,'delivered',0,'','','','','','whatsapp','');
+INSERT OR IGNORE INTO messages VALUES('wa2b','wa2','Noah Patel','+13105558888','Brunch! That new place on 14th has a great patio',1738953000000,'delivered',0,'','','','','','whatsapp','');
+INSERT OR IGNORE INTO messages VALUES('wa2c','wa2','Me','+15551234567','I am in for brunch. 11am?',1738957200000,'delivered',1,'','','','','','whatsapp','');
+
+INSERT OR IGNORE INTO messages VALUES('wa3a','wa3','Mia Torres','+12025557777','Hey, can you send me that article you mentioned?',1738944000000,'delivered',0,'','','','','','whatsapp','');
+INSERT OR IGNORE INTO messages VALUES('wa3b','wa3','Me','+15551234567','Just sent it! Let me know what you think',1738950000000,'delivered',1,'','','','','','whatsapp','');
+
 INSERT OR IGNORE INTO contacts VALUES('c1','Sarah Chen','+14155551234');
 INSERT OR IGNORE INTO contacts VALUES('c2','Marcus Johnson','+12125559876');
 INSERT OR IGNORE INTO contacts VALUES('c3','Emily Park','+13105553456');
@@ -141,6 +160,9 @@ INSERT OR IGNORE INTO contacts VALUES('c4','David Kim','+14085557890');
 INSERT OR IGNORE INTO contacts VALUES('c5','Lisa Rodriguez','+12025551111');
 INSERT OR IGNORE INTO contacts VALUES('c6','Alex Thompson','+17185552222');
 INSERT OR IGNORE INTO contacts VALUES('c7','Rachel Green','+16505553333');
+INSERT OR IGNORE INTO contacts VALUES('c8','Jordan Rivera','+14699991654');
+INSERT OR IGNORE INTO contacts VALUES('c9','Mia Torres','+12025557777');
+INSERT OR IGNORE INTO contacts VALUES('c10','Noah Patel','+13105558888');
 
 INSERT OR IGNORE INTO drafts VALUES('draft1','conv3','Count me in for Saturday! Lands End trail looks clear — 62°F and sunny. Want me to bring snacks?',1738961000000);
 	`

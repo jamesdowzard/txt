@@ -5870,6 +5870,7 @@ body::after {
     return {
       connected: !!raw.connected,
       paired: raw.paired === undefined ? !!raw.connected : !!raw.paired,
+      needs_pairing: !!raw.needs_pairing,
       last_error: raw.last_error || '',
     };
   }
@@ -5882,7 +5883,7 @@ body::after {
     }
     $connectionBanner.className = 'connection-banner disconnected';
     $connectionBanner.style.display = 'flex';
-    if (googleStatus.paired) {
+    if (googleStatus.paired && !googleStatus.needs_pairing) {
       $connectionBannerCopy.textContent = 'Google Messages sync is paused';
       $connectionBannerAction.textContent = 'Reconnect';
       $connectionBannerAction.dataset.action = 'reconnect-google';
@@ -5933,7 +5934,7 @@ body::after {
 
   function googleStatusText() {
     if (googleStatus.connected) return 'Connected';
-    if (googleStatus.paired) return 'Needs reconnect';
+    if (googleStatus.paired && !googleStatus.needs_pairing) return 'Needs reconnect';
     return 'Needs pairing';
   }
 
@@ -5953,7 +5954,7 @@ body::after {
       notes = ['Google Messages', 'WhatsApp', 'Local-first'];
       action = 'open-connections';
       cta = 'Open Connections';
-    } else if (!googleStatus.connected && googleStatus.paired) {
+    } else if (!googleStatus.connected && googleStatus.paired && !googleStatus.needs_pairing) {
       title = noConversations ? 'Reconnect Google Messages' : 'Live sync is paused';
       copy = 'Your local message history is still here, but new SMS and RCS updates will not arrive until Google Messages reconnects.';
       notes = ['Reconnect SMS', 'WhatsApp still local', 'Search existing history'];
@@ -6009,15 +6010,17 @@ body::after {
       $gmHelper.textContent = 'Google Messages live sync is active. New SMS and RCS messages should appear immediately.';
       showGoogleError('');
       $gmActionsRow.style.display = 'none';
-    } else if (googleStatus.paired) {
+    } else if (googleStatus.paired && !googleStatus.needs_pairing) {
       $gmHelper.textContent = 'This Google Messages account is paired locally, but live SMS and RCS sync is currently paused. Reconnect to resume updates.';
       showGoogleError(googleStatus.last_error);
       $gmActionsRow.style.display = '';
       $gmReconnectBtn.disabled = false;
       $gmReconnectBtn.textContent = 'Reconnect Google Messages';
     } else {
-      $gmHelper.textContent = 'Google Messages is not paired yet. In the macOS app, restart to see the pairing screen. From the CLI, run openmessage pair.';
-      showGoogleError('');
+      $gmHelper.textContent = googleStatus.last_error
+        ? 'Google Messages needs to be paired again. Open the macOS pairing screen or run openmessage pair to reconnect.'
+        : 'Google Messages is not paired yet. In the macOS app, restart to see the pairing screen. From the CLI, run openmessage pair.';
+      showGoogleError(googleStatus.last_error);
       $gmActionsRow.style.display = 'none';
     }
 

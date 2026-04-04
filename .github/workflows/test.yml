@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GO_COVERAGE_MIN: "40.0"
+
 jobs:
   go-test:
     name: Go Test
@@ -22,8 +25,42 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run Go test suite
-        run: go test ./...
+      - name: Run Go test suite with coverage
+        run: go test ./... -coverprofile=coverage.out
+
+      - name: Summarize Go coverage
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          total=$(awk '/^total:/ {gsub("%", "", $NF); print $NF}' coverage.txt)
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+        id: coverage
+
+      - name: Enforce Go coverage floor
+        run: |
+          awk -v total="${{ steps.coverage.outputs.total }}" -v min="${GO_COVERAGE_MIN}" 'BEGIN { exit !(total + 0 >= min + 0) }'
+
+      - name: Upload Go coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            coverage.txt
+
+  go-race:
+    name: Go Race
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go race suite
+        run: go test -race ./...
 
   e2e:
     name: Web E2E
@@ -60,3 +97,47 @@ jobs:
           path: |
             playwright-report/
             test-results/
+
+  site-build:
+    name: Site Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install site dependencies
+        run: npm ci
+
+      - name: Build marketing site
+        run: npm run build
+
+  macos-build:
+    name: macOS App Build
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build macOS app
+        run: |
+          xcodebuild \
+            -project OpenMessage/OpenMessage.xcodeproj \
+            -scheme OpenMessage \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

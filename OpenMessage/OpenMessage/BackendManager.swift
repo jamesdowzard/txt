@@ -25,8 +25,12 @@ final class BackendManager: ObservableObject {
 
     /// Path to the embedded Go binary inside the app bundle.
     var binaryPath: String {
-        if let bundlePath = Bundle.main.resourcePath {
-            let embedded = (bundlePath as NSString).appendingPathComponent("openmessage")
+        if let resourcePath = Bundle.main.resourceURL?.appendingPathComponent("openmessage").path,
+           FileManager.default.fileExists(atPath: resourcePath) {
+            return resourcePath
+        }
+        if let executablePath = Bundle.main.executableURL?.deletingLastPathComponent().path {
+            let embedded = (executablePath as NSString).appendingPathComponent("openmessage-helper")
             if FileManager.default.fileExists(atPath: embedded) {
                 return embedded
             }
@@ -97,6 +101,7 @@ final class BackendManager: ObservableObject {
             "OPENMESSAGES_PORT": String(port),
             "OPENMESSAGES_DATA_DIR": dataDir,
             "OPENMESSAGES_LOG_LEVEL": "info",
+            "OPENMESSAGES_APP_SANDBOX": "1",
             "HOME": NSHomeDirectory(),
             "PATH": "/usr/local/bin:/usr/bin:/bin",
         ]
@@ -218,12 +223,20 @@ final class BackendManager: ObservableObject {
                     let url = baseURL.appendingPathComponent("api/status")
                     let (data, response) = try await URLSession.shared.data(from: url)
                     if let http = response as? HTTPURLResponse, http.statusCode == 200,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       json["connected"] as? Bool == true {
-                        self.state = .running
-                        self.logger.info("Backend ready after \(attempt) checks")
-                        self.startConnectionMonitor()
-                        return
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if json["connected"] as? Bool == true {
+                            self.state = .running
+                            self.logger.info("Backend ready after \(attempt) checks")
+                            self.startConnectionMonitor()
+                            return
+                        }
+                        if let google = json["google"] as? [String: Any],
+                           google["needs_pairing"] as? Bool == true {
+                            self.logger.warning("Backend reports Google Messages needs pairing")
+                            self.stop()
+                            self.state = .needsPairing
+                            return
+                        }
                     }
                 } catch {
                     self.logger.debug("Health check \(attempt): \(error)")
@@ -247,17 +260,24 @@ final class BackendManager: ObservableObject {
                     let url = baseURL.appendingPathComponent("api/status")
                     let (data, response) = try await URLSession.shared.data(from: url)
                     if let http = response as? HTTPURLResponse, http.statusCode == 200,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       json["connected"] as? Bool == false {
-                        consecutiveDisconnects += 1
-                        self.logger.warning("Disconnect detected (\(consecutiveDisconnects)/3)")
-                        if consecutiveDisconnects >= 3 {
-                            self.logger.error("Phone disconnected — returning to pairing")
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        let google = json["google"] as? [String: Any]
+                        if google?["needs_pairing"] as? Bool == true {
+                            self.logger.error("Google Messages session invalidated — returning to pairing")
                             self.handleDisconnect()
                             return
                         }
-                    } else {
-                        consecutiveDisconnects = 0
+                        if json["connected"] as? Bool == false {
+                            consecutiveDisconnects += 1
+                            self.logger.warning("Disconnect detected (\(consecutiveDisconnects)/3)")
+                            if consecutiveDisconnects >= 3 {
+                                self.logger.error("Phone disconnected — returning to pairing")
+                                self.handleDisconnect()
+                                return
+                            }
+                        } else {
+                            consecutiveDisconnects = 0
+                        }
                     }
                 } catch {
                     self.logger.debug("Connection monitor error: \(error)")
@@ -287,13 +307,21 @@ final class BackendManager: ObservableObject {
 
     /// Run the pairing flow. Returns the QR code URL for display.
     func startPairing() async -> AsyncStream<PairingEvent> {
+        pairingEvents(arguments: ["pair"], stdinText: nil)
+    }
+
+    func startGooglePairing(cookieInput: String) async -> AsyncStream<PairingEvent> {
+        pairingEvents(arguments: ["pair", "--google-stdin"], stdinText: cookieInput)
+    }
+
+    private func pairingEvents(arguments: [String], stdinText: String?) -> AsyncStream<PairingEvent> {
         let binPath = self.binaryPath
         let dataDirPath = self.dataDir
         return AsyncStream { continuation in
             Task.detached {
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: binPath)
-                proc.arguments = ["pair"]
+                proc.arguments = arguments
                 proc.environment = [
                     "OPENMESSAGES_DATA_DIR": dataDirPath,
                     "HOME": NSHomeDirectory(),
@@ -303,6 +331,12 @@ final class BackendManager: ObservableObject {
                 let pipe = Pipe()
                 proc.standardOutput = pipe
                 proc.standardError = pipe
+                if let stdinText {
+                    let stdinPipe = Pipe()
+                    proc.standardInput = stdinPipe
+                    stdinPipe.fileHandleForWriting.write(Data(stdinText.utf8))
+                    stdinPipe.fileHandleForWriting.closeFile()
+                }
 
                 pipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
@@ -317,10 +351,15 @@ final class BackendManager: ObservableObject {
                         if let range = trimmed.range(of: "https://", options: .caseInsensitive) {
                             let url = String(trimmed[range.lowerBound...])
                             continuation.yield(.qrURL(url))
+                        } else if trimmed.hasPrefix("EMOJI:") {
+                            let emoji = trimmed.replacingOccurrences(of: "EMOJI:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                            continuation.yield(.emoji(emoji))
                         } else if trimmed.hasPrefix("http://") {
                             continuation.yield(.qrURL(trimmed))
                         } else if trimmed.lowercased().contains("success") || trimmed.lowercased().contains("paired") {
                             continuation.yield(.success)
+                        } else if !trimmed.contains("█") && !trimmed.contains("▀") && !trimmed.contains("▄") {
+                            continuation.yield(.log(trimmed))
                         }
                         // Skip QR art and other log lines to avoid noisy status updates
                     }
@@ -352,6 +391,7 @@ final class BackendManager: ObservableObject {
 
 enum PairingEvent {
     case qrURL(String)
+    case emoji(String)
     case log(String)
     case success
     case failed(String)
