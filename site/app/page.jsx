@@ -13,95 +13,68 @@ import {
   workflowSteps
 } from "../data/site-content";
 
-const heroStats = [
-  { label: "Routes live now", value: "SMS, RCS, WhatsApp" },
-  { label: "Runtime", value: "Local SQLite + MCP" },
-  { label: "Built with", value: "Go, Swift, Web UI" }
+const heroSignals = [
+  "Google Messages + WhatsApp live now",
+  "Native macOS app + local web runtime",
+  "MCP endpoint built into the same local store"
 ];
 
-const primaryActionClassName =
-  "inline-flex items-center justify-center rounded-full bg-[var(--accent)] px-6 py-3.5 text-sm font-semibold text-[var(--bg-deep)] transition-transform hover:-translate-y-0.5";
-const secondaryActionClassName =
-  "inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-[color:rgba(13,23,40,0.82)] px-6 py-3.5 text-sm font-semibold text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]";
-const panelClassName =
-  "rounded-[2rem] border border-[var(--border)] bg-[color:rgba(13,23,40,0.74)] p-7 shadow-[0_18px_70px_rgba(4,12,24,0.24)] lg:p-8";
-const sectionBodyClassName = "mt-5 max-w-[28rem] text-base leading-7 text-[var(--text-secondary)]";
-
-function ActionLink({
-  children,
-  href,
-  minWidthClassName = "",
-  openInNewTab = false,
-  variant = "secondary"
-}) {
-  const className =
-    variant === "primary"
-      ? `${primaryActionClassName} ${minWidthClassName}`.trim()
-      : `${secondaryActionClassName} ${minWidthClassName}`.trim();
-  const linkProps = openInNewTab ? { rel: "noreferrer", target: "_blank" } : {};
+function ActionLink({ children, href, external = false, primary = false }) {
+  const className = primary
+    ? "inline-flex items-center justify-center rounded-full bg-[var(--accent)] px-6 py-3.5 text-sm font-semibold text-[var(--bg-deep)] transition-transform hover:-translate-y-0.5"
+    : "inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-[color:rgba(8,13,24,0.72)] px-6 py-3.5 text-sm font-semibold text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]";
+  const props = external ? { rel: "noreferrer", target: "_blank" } : {};
 
   return (
-    <a href={href} className={className} {...linkProps}>
+    <a href={href} className={className} {...props}>
       {children}
     </a>
   );
 }
 
-function SectionIntro({ body, eyebrow, title }) {
+function SectionHeading({ body, eyebrow, title }) {
   return (
-    <div className="max-w-[42rem]">
-      <span className="eyebrow">{eyebrow}</span>
-      <h2 className="mt-5 text-[clamp(2.2rem,4vw,3.8rem)] font-semibold leading-[0.98] tracking-[-0.06em]">
+    <div className="max-w-[34rem]">
+      <div className="eyebrow">{eyebrow}</div>
+      <h2 className="mt-5 text-[clamp(2.2rem,4vw,4rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
         {title}
       </h2>
-      {body ? <p className={sectionBodyClassName}>{body}</p> : null}
+      {body ? (
+        <p className="mt-5 text-base leading-7 text-[var(--text-secondary)]">{body}</p>
+      ) : null}
     </div>
   );
 }
 
-function HeroStat({ label, value }) {
+function ProductSignal({ index, signal }) {
   return (
-    <div>
-      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">
-        {label}
-      </div>
-      <div className="mt-2 font-medium text-[var(--text-primary)]">{value}</div>
-    </div>
-  );
-}
-
-function ProductSignalCard({ index, signal, total }) {
-  const isLast = index === total - 1;
-  const className = isLast
-    ? "px-0 py-8 lg:px-8"
-    : "border-b border-[var(--border)] px-0 py-8 lg:border-b-0 lg:border-r lg:px-8";
-
-  return (
-    <article className={className}>
-      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">
+    <article className="grid gap-4 border-b border-[var(--border)] py-7 last:border-b-0 md:grid-cols-[72px_minmax(0,1fr)] md:gap-6">
+      <div className="text-[0.75rem] font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">
         {String(index + 1).padStart(2, "0")}
       </div>
-      <h3 className="mt-4 text-2xl font-semibold tracking-[-0.045em] text-[var(--text-primary)]">
-        {signal.title}
-      </h3>
-      <p className="mt-4 max-w-[24rem] text-base leading-7 text-[var(--text-secondary)]">
-        {signal.body}
-      </p>
+      <div>
+        <h3 className="text-[1.65rem] font-semibold tracking-[-0.05em] text-[var(--text-primary)]">
+          {signal.title}
+        </h3>
+        <p className="mt-3 max-w-[34rem] text-base leading-7 text-[var(--text-secondary)]">
+          {signal.body}
+        </p>
+      </div>
     </article>
   );
 }
 
-function WorkflowStepCard({ step }) {
+function WorkflowStep({ step }) {
   return (
-    <div className="grid gap-4 border-b border-[var(--border)] pb-8 last:border-b-0 last:pb-0 md:grid-cols-[96px_minmax(0,1fr)]">
-      <div className="text-5xl font-semibold tracking-[-0.08em] text-[var(--accent-strong)]">
+    <div className="grid gap-4 border-b border-[var(--border)] py-6 last:border-b-0 md:grid-cols-[88px_minmax(0,1fr)]">
+      <div className="text-[2.8rem] font-semibold tracking-[-0.08em] text-[var(--accent-strong)]">
         {step.number}
       </div>
       <div>
-        <h3 className="text-2xl font-semibold tracking-[-0.045em] text-[var(--text-primary)]">
+        <h3 className="text-[1.45rem] font-semibold tracking-[-0.045em] text-[var(--text-primary)]">
           {step.title}
         </h3>
-        <p className="mt-3 max-w-[42rem] text-base leading-7 text-[var(--text-secondary)]">
+        <p className="mt-3 max-w-[34rem] text-base leading-7 text-[var(--text-secondary)]">
           {step.body}
         </p>
       </div>
@@ -109,9 +82,11 @@ function WorkflowStepCard({ step }) {
   );
 }
 
-function SetupCard({ column }) {
+function SetupColumn({ column, index }) {
   return (
-    <section className={panelClassName}>
+    <section
+      className={`py-8 ${index === 0 ? "border-b border-[var(--border)] lg:border-b-0 lg:border-r lg:pr-8" : "lg:pl-8"}`}
+    >
       <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--accent-strong)]">
         {column.eyebrow}
       </div>
@@ -142,83 +117,80 @@ function SetupCard({ column }) {
   );
 }
 
-function AIBlockCard({ block }) {
+function AIBlock({ block }) {
   return (
-    <article className="rounded-[2rem] border border-[var(--border)] bg-[color:rgba(13,23,40,0.74)] p-7">
-      <h3 className="text-[1.45rem] font-semibold tracking-[-0.045em] text-[var(--text-primary)]">
+    <div className="border-b border-[var(--border)] py-6 last:border-b-0">
+      <div className="text-[1.35rem] font-semibold tracking-[-0.045em] text-[var(--text-primary)]">
         {block.title}
-      </h3>
-      <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">{block.body}</p>
-      <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--bg-deep)] px-4 py-3 font-mono text-sm text-[var(--accent-strong)]">
-        {block.command}
       </div>
-    </article>
+      <p className="mt-3 max-w-[38rem] text-base leading-7 text-[var(--text-secondary)]">
+        {block.body}
+      </p>
+      <div className="mt-4 font-mono text-sm text-[var(--accent-strong)]">{block.command}</div>
+    </div>
   );
 }
 
 export default function HomePage() {
   return (
     <main className="min-h-screen">
-      <SiteHeader />
+      <SiteHeader overlay />
 
       <section className="relative overflow-hidden border-b border-[var(--border)]">
-        <div className="absolute inset-x-0 top-[-18rem] h-[34rem] bg-[radial-gradient(circle_at_top,rgba(79,108,255,0.22),transparent_62%)]" />
-        <div className="mx-auto grid max-w-[1360px] gap-16 px-6 pb-20 pt-18 lg:grid-cols-[minmax(0,520px)_minmax(0,1fr)] lg:px-10 lg:pb-28 lg:pt-24">
-          <div className="relative z-10 flex max-w-[34rem] flex-col justify-center">
-            <div className="animate-fade-up">
-              <span className="eyebrow">Local-first messaging workspace</span>
-            </div>
-            <h1 className="animate-fade-up mt-6 text-[clamp(3.4rem,7vw,6.8rem)] font-semibold leading-[0.94] tracking-[-0.065em] text-[var(--text-primary)] [animation-delay:120ms]">
-              One desktop surface
-              <span className="block text-[var(--accent-strong)]">for your real messages.</span>
-            </h1>
-            <p className="animate-fade-up mt-6 max-w-[32rem] text-lg leading-8 text-[var(--text-secondary)] [animation-delay:220ms]">
-              OpenMessage brings Google Messages and WhatsApp into one local workspace, then
-              exposes the same context to AI assistants through a local MCP endpoint.
-            </p>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(118,137,255,0.18),transparent_34%),radial-gradient(circle_at_75%_30%,rgba(118,137,255,0.1),transparent_24%)]" />
+        <div className="relative mx-auto max-w-[1520px] px-6 pb-16 pt-28 lg:px-10 lg:pb-24 lg:pt-34">
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)] lg:items-end">
+            <div className="max-w-[32rem]">
+              <div className="eyebrow">Live now for Google Messages + WhatsApp</div>
+              <div className="animate-fade-up mt-7 text-[clamp(4.2rem,10vw,8rem)] font-semibold leading-[0.88] tracking-[-0.09em] text-[var(--text-primary)]">
+                OpenMessage
+              </div>
+              <h1 className="animate-fade-up mt-6 text-[clamp(2rem,4.5vw,4rem)] font-semibold leading-[0.94] tracking-[-0.06em] text-[var(--text-primary)] [animation-delay:120ms]">
+                The local desktop for SMS, RCS, and WhatsApp.
+              </h1>
+              <p className="animate-fade-up mt-6 max-w-[30rem] text-lg leading-8 text-[var(--text-secondary)] [animation-delay:220ms]">
+                Pair the routes people already use, keep the message store on your machine, and
+                give Claude the same context through a local MCP endpoint.
+              </p>
 
-            <div className="animate-fade-up mt-9 flex flex-col gap-4 sm:flex-row [animation-delay:320ms]">
-              <ActionLink href={downloadUrl} minWidthClassName="min-w-[220px]" variant="primary">
-                Download for macOS
-              </ActionLink>
-              <ActionLink
-                href={repoUrl}
-                minWidthClassName="min-w-[220px]"
-                openInNewTab
-              >
-                View the repo
-              </ActionLink>
-            </div>
-
-            <div className="animate-fade-up mt-12 grid gap-4 border-y border-[var(--border)] py-5 text-sm text-[var(--text-secondary)] sm:grid-cols-3 [animation-delay:420ms]">
-              {heroStats.map((stat) => (
-                <HeroStat key={stat.label} label={stat.label} value={stat.value} />
-              ))}
-            </div>
-          </div>
-
-          <div className="relative flex items-center justify-center lg:justify-end">
-            <div className="absolute right-8 top-10 hidden h-48 w-48 rounded-full bg-[var(--accent-glow)] blur-3xl lg:block" />
-            <div className="relative w-full max-w-[840px] animate-fade-up [animation-delay:180ms]">
-              <div className="animate-float-slow absolute -bottom-10 left-[-2rem] hidden rounded-3xl border border-[var(--border)] bg-[color:rgba(13,23,40,0.9)] p-5 shadow-[var(--panel-shadow)] lg:block">
-                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">
-                  AI control layer
-                </div>
-                <p className="mt-3 max-w-[18rem] text-sm leading-6 text-[var(--text-secondary)]">
-                  Local search, thread reads, sends, drafts, and summaries through the same
-                  message surface.
-                </p>
+              <div className="animate-fade-up mt-9 flex flex-col gap-4 sm:flex-row [animation-delay:320ms]">
+                <ActionLink href={downloadUrl} primary>
+                  Download for macOS
+                </ActionLink>
+                <ActionLink href={repoUrl} external>
+                  View the repo
+                </ActionLink>
               </div>
 
-              <div className="overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[color:rgba(13,23,40,0.86)] shadow-[var(--panel-shadow)]">
+              <div className="animate-fade-up mt-9 flex flex-wrap gap-3 [animation-delay:420ms]">
+                {heroSignals.map((signal) => (
+                  <div
+                    key={signal}
+                    className="rounded-full border border-[var(--border)] bg-[color:rgba(8,13,24,0.6)] px-4 py-2 text-[0.78rem] font-medium text-[var(--text-secondary)]"
+                  >
+                    {signal}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="relative animate-fade-up [animation-delay:180ms]">
+              <div className="absolute right-[6%] top-[8%] hidden h-52 w-52 rounded-full bg-[var(--accent-glow)] blur-3xl lg:block" />
+              <div className="relative overflow-hidden rounded-[2.6rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.78)] shadow-[var(--panel-shadow)]">
                 <Image
                   src="/hero-product-dark.png"
-                  alt="OpenMessage desktop workspace showing a grouped contact with WhatsApp and SMS lanes"
+                  alt="OpenMessage workspace showing grouped SMS and WhatsApp threads"
                   width={1600}
                   height={1100}
                   priority
                   className="h-auto w-full"
                 />
+              </div>
+              <div className="mt-4 flex flex-col gap-3 text-sm text-[var(--text-muted)] md:flex-row md:items-center md:justify-between">
+                <div>Grouped routes, media, desktop notifications, local diagnostics.</div>
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[var(--accent-strong)]">
+                  Local-first by default
+                </div>
               </div>
             </div>
           </div>
@@ -226,37 +198,43 @@ export default function HomePage() {
       </section>
 
       <section id="features" className="border-b border-[var(--border)]">
-        <div className="mx-auto max-w-[1360px] px-6 py-20 lg:px-10">
-          <SectionIntro
-            eyebrow="Why it feels different"
-            title="It behaves like a real messaging client, not a browser hack with an AI sticker on it."
+        <div className="mx-auto grid max-w-[1520px] gap-12 px-6 py-20 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:px-10">
+          <SectionHeading
+            eyebrow="What ships now"
+            title="A real client first, then an AI surface on top."
+            body="The point is not another mirror tab. OpenMessage already handles the actual workflows: route-aware replies, WhatsApp media, grouped people, native notifications, and a shared local store."
           />
 
-          <div className="mt-14 grid border-y border-[var(--border)] lg:grid-cols-3">
+          <div className="border-y border-[var(--border)]">
             {productSignals.map((signal, index) => (
-              <ProductSignalCard
-                key={signal.title}
-                index={index}
-                signal={signal}
-                total={productSignals.length}
-              />
+              <ProductSignal key={signal.title} index={index} signal={signal} />
             ))}
           </div>
         </div>
       </section>
 
       <section className="border-b border-[var(--border)]">
-        <div className="mx-auto max-w-[1360px] px-6 py-20 lg:px-10">
-          <div className="grid gap-12 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-            <SectionIntro
+        <div className="mx-auto grid max-w-[1520px] gap-14 px-6 py-20 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,360px)] lg:px-10">
+          <div className="overflow-hidden rounded-[2.3rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.74)] shadow-[var(--panel-shadow)]">
+            <Image
+              src="/hero-command-surface.png"
+              alt="OpenMessage app beside a terminal using MCP commands against it"
+              width={3232}
+              height={1800}
+              className="h-auto w-full"
+            />
+          </div>
+
+          <div className="flex flex-col justify-between">
+            <SectionHeading
               eyebrow="Workflow"
-              title="Pair once. Stay in flow."
-              body="OpenMessage is built around the thread workspace itself: routes on the left, messages in the center, local automation at the edge."
+              title="One thread surface for the messages and the commands around them."
+              body="The same local runtime powers the app, search, diagnostics, and MCP. That means your assistant can inspect or draft against the same conversation state you are already looking at."
             />
 
-            <div className="grid gap-10 border-t border-[var(--border)] pt-8 lg:pt-0">
+            <div className="mt-8 border-y border-[var(--border)]">
               {workflowSteps.map((step) => (
-                <WorkflowStepCard key={step.number} step={step} />
+                <WorkflowStep key={step.number} step={step} />
               ))}
             </div>
           </div>
@@ -264,56 +242,59 @@ export default function HomePage() {
       </section>
 
       <section id="setup" className="border-b border-[var(--border)]">
-        <div className="mx-auto max-w-[1360px] px-6 py-20 lg:px-10">
-          <SectionIntro
+        <div className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+          <SectionHeading
             eyebrow="Setup"
-            title="Native app if you want it. Bare metal if you don&apos;t."
+            title="Start with the native app, or run the same local stack directly."
+            body="The fast path is the macOS app with notifications, contacts, and an embedded backend. The same product also runs as a plain Go binary with a local web UI and the same MCP surface."
           />
 
-          <div className="mt-14 grid gap-8 lg:grid-cols-2">
-            {setupColumns.map((column) => (
-              <SetupCard key={column.title} column={column} />
+          <div className="mt-14 grid border-y border-[var(--border)] lg:grid-cols-2">
+            {setupColumns.map((column, index) => (
+              <SetupColumn key={column.title} column={column} index={index} />
             ))}
           </div>
         </div>
       </section>
 
       <section id="ai" className="border-b border-[var(--border)]">
-        <div className="mx-auto max-w-[1360px] px-6 py-20 lg:px-10">
-          <div className="grid gap-10 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-            <SectionIntro
-              eyebrow="AI integration"
-              title="The message client is also the local tool surface."
-              body="OpenMessage doesn&apos;t bolt automation on later. The same local runtime that powers the UI also powers MCP, search, diagnostics, and route-aware sends."
-            />
+        <div className="mx-auto grid max-w-[1520px] gap-12 px-6 py-20 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:px-10">
+          <SectionHeading
+            eyebrow="MCP"
+            title="Your assistant sees the same routes you do."
+            body="OpenMessage exposes one local endpoint for search, drafts, sends, and thread inspection. No cloud relay, no separate sync layer, and no fake demo surface disconnected from the actual inbox."
+          />
 
-            <div className="grid gap-6">
-              <div className="grid gap-6 lg:grid-cols-2">
-                {aiBlocks.map((block) => (
-                  <AIBlockCard key={block.title} block={block} />
-                ))}
-              </div>
-
+          <div className="border-y border-[var(--border)]">
+            {aiBlocks.map((block) => (
+              <AIBlock key={block.title} block={block} />
+            ))}
+            <div className="py-8">
               <CommandBlock label="Claude Code">{claudeMcpCommand}</CommandBlock>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-[1360px] px-6 py-20 lg:px-10">
-        <div className="rounded-[2.25rem] border border-[var(--border)] bg-[linear-gradient(135deg,rgba(13,23,40,0.92),rgba(19,32,53,0.92))] px-8 py-10 shadow-[var(--panel-shadow)] lg:px-12 lg:py-14">
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <div>
-              <span className="eyebrow">Ready now</span>
-              <h2 className="mt-5 max-w-[28rem] text-[clamp(2.1rem,4vw,3.5rem)] font-semibold leading-[0.98] tracking-[-0.06em]">
-                Ship the local workspace first. Add the rest of your messaging stack over time.
+      <section className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+        <div className="border-y border-[var(--border)] py-12">
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <div className="max-w-[36rem]">
+              <div className="eyebrow">Ready now</div>
+              <h2 className="mt-5 text-[clamp(2.2rem,4vw,4rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
+                Start with Google Messages and WhatsApp. Add the rest of the stack later.
               </h2>
+              <p className="mt-5 text-base leading-7 text-[var(--text-secondary)]">
+                OpenMessage already ships the routes people actually need, with local search,
+                route-aware replies, media, diagnostics, notifications, and MCP in one product.
+              </p>
             </div>
+
             <div className="flex flex-col gap-4 sm:flex-row">
-              <ActionLink href={downloadUrl} variant="primary">
+              <ActionLink href={downloadUrl} primary>
                 Download OpenMessage
               </ActionLink>
-              <ActionLink href={repoUrl} openInNewTab>
+              <ActionLink href={repoUrl} external>
                 Read the code
               </ActionLink>
             </div>
