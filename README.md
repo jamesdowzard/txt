@@ -1,8 +1,16 @@
 # OpenMessage
 
-An open-source Google Messages client with MCP support. Read and send SMS/RCS from Claude Code, a web UI, or any MCP-compatible tool.
+OpenMessage is a local-first messaging workspace for Google Messages and WhatsApp. Use it from the native macOS app, the localhost web UI, or any MCP-compatible client.
 
 Built on [mautrix/gmessages](https://github.com/mautrix/gmessages) (libgm) for the Google Messages protocol and [mcp-go](https://github.com/mark3labs/mcp-go) for the MCP server.
+
+## What it does
+
+- **Google Messages for Mac** — pair your Android phone and read/send SMS + RCS locally
+- **Live WhatsApp support** — link WhatsApp as a live companion device on your machine
+- **One local inbox** — search, route-aware threads, media, reactions, drafts, and grouped contacts
+- **macOS app + web UI** — native wrapper with notifications and contact photos, plus a localhost UI
+- **MCP-ready** — expose the same local inbox to Claude Code and other MCP clients
 
 ## Quick start
 
@@ -47,6 +55,10 @@ This starts both:
 
 When `serve` is launched by an MCP client over pipes, it also serves MCP on stdio automatically.
 
+### 3a. Optional: link WhatsApp
+
+After `serve` is running, open the local UI and link WhatsApp from the Connections surface. OpenMessage keeps that bridge local and syncs it into the same inbox as Google Messages.
+
 ### 4. Connect to Claude Code
 
 Add to `~/.mcp.json`:
@@ -66,13 +78,14 @@ Restart Claude Code. The MCP tools appear automatically.
 
 ## Features
 
-- **Read messages** — full conversation history, search, media
-- **Send messages** — SMS and RCS, including replies
-- **Live WhatsApp sync** — pair a local WhatsApp companion device from the web UI for live inbound messages, typing indicators, and text replies
+- **Read messages** — full conversation history, search, media, replies, reactions
+- **Send messages** — SMS/RCS plus live WhatsApp text, media, and voice notes
+- **Live WhatsApp sync** — pair a local WhatsApp companion device for inbound messages, typing indicators, read state, and media
 - **React to messages** — emoji reactions on any message
-- **Image/media display** — inline images with fullscreen viewer
-- **Web UI** — real-time conversation view at localhost:7007
-- **MCP tools** — conversation lookup, direct replies, media download, import helpers, and story/viz tools for Claude Code integration
+- **Image/media display** — inline images, video, audio, and fullscreen viewer
+- **Desktop notifications** — native macOS notifications for fresh inbound messages
+- **Web UI + macOS app** — real-time conversation view at localhost:7007 and a native wrapper
+- **MCP tools** — conversation lookup, direct replies, route-aware sends, media download, import helpers, and story/viz tools
 - **Local storage** — SQLite database, your data stays on your machine
 
 ## MCP tools
@@ -92,12 +105,22 @@ Restart Claude Code. The MCP tools appear automatically.
 
 The web UI runs at `http://localhost:7007` when the server is started. It provides:
 
-- Conversation list with search
-- Message view with images, reactions, and reply threads
-- Compose and send messages
-- WhatsApp live-pairing control from the `WA` button in the sidebar
-- React to messages (right-click)
-- Reply to messages (double-click)
+- Conversation list with search and grouped multi-route contacts
+- Message view with images, video, audio, reactions, and reply threads
+- Route-aware compose and send
+- Google Messages + WhatsApp connection controls
+- Live typing indicators, read-state rendering, and notifications
+
+## Native macOS app
+
+The repo also includes a native Swift wrapper around the same local backend:
+
+- embedded local OpenMessage backend
+- native notifications
+- contact photos
+- the same Google Messages and WhatsApp pairing/runtime model as the web UI
+
+The macOS app target lives under `OpenMessage/`.
 
 ## Configuration
 
@@ -114,12 +137,13 @@ The web UI runs at `http://localhost:7007` when the server is started. It provid
 ## Architecture
 
 - **libgm** handles the Google Messages protocol (pairing, encryption, long-polling)
-- **whatsmeow** handles optional live WhatsApp pairing, text sending, and sync through a separate local session store
+- **whatsmeow** handles live WhatsApp pairing, sync, text/media send, receipts, typing, and avatars through a separate local session store
 - **SQLite** (WAL mode, pure Go) stores messages, conversations, and contacts locally
 - Real-time events from the phone are written to SQLite as they arrive
-- WhatsApp Desktop import remains as a fallback when the live bridge is not active
+- The native macOS app and the localhost web UI run against the same local backend
+- WhatsApp Desktop import remains as a fallback/repair path when the live bridge is not active
 - On first run, a deep backfill fetches full SMS/RCS history in the background; later runs do a lighter incremental sync by default
-- MCP tool handlers read from SQLite for queries, call libgm for sends
+- MCP tool handlers read from SQLite for queries and route sends through the same local runtime
 - Auth tokens auto-refresh and persist to `session.json`
 
 ## Development
