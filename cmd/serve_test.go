@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -85,4 +86,65 @@ func TestMacOSNotificationsEnabled(t *testing.T) {
 			t.Fatal("expected env override to disable notifications")
 		}
 	})
+}
+
+func TestParseServeOptions(t *testing.T) {
+	t.Run("defaults to normal serve", func(t *testing.T) {
+		opts, err := parseServeOptions(nil)
+		if err != nil {
+			t.Fatalf("parseServeOptions(): %v", err)
+		}
+		if opts.demo {
+			t.Fatal("expected demo=false by default")
+		}
+	})
+
+	t.Run("accepts demo aliases", func(t *testing.T) {
+		for _, arg := range []string{"--demo", "--mock"} {
+			opts, err := parseServeOptions([]string{arg})
+			if err != nil {
+				t.Fatalf("parseServeOptions(%q): %v", arg, err)
+			}
+			if !opts.demo {
+				t.Fatalf("expected demo=true for %q", arg)
+			}
+		}
+	})
+
+	t.Run("rejects unknown flags", func(t *testing.T) {
+		if _, err := parseServeOptions([]string{"--wat"}); err == nil {
+			t.Fatal("expected error for unknown serve option")
+		}
+	})
+}
+
+func TestConfigureServeEnvRestoresPreviousValue(t *testing.T) {
+	original, hadOriginal := os.LookupEnv("OPENMESSAGES_DEMO")
+	t.Cleanup(func() {
+		if hadOriginal {
+			_ = os.Setenv("OPENMESSAGES_DEMO", original)
+			return
+		}
+		_ = os.Unsetenv("OPENMESSAGES_DEMO")
+	})
+
+	_ = os.Unsetenv("OPENMESSAGES_DEMO")
+	restore := configureServeEnv(serveOptions{demo: true})
+	if got := os.Getenv("OPENMESSAGES_DEMO"); got != "1" {
+		t.Fatalf("OPENMESSAGES_DEMO=%q, want 1", got)
+	}
+	restore()
+	if _, ok := os.LookupEnv("OPENMESSAGES_DEMO"); ok {
+		t.Fatal("expected OPENMESSAGES_DEMO to be unset after restore")
+	}
+
+	_ = os.Setenv("OPENMESSAGES_DEMO", "existing")
+	restore = configureServeEnv(serveOptions{demo: true})
+	if got := os.Getenv("OPENMESSAGES_DEMO"); got != "1" {
+		t.Fatalf("OPENMESSAGES_DEMO=%q, want 1 during demo", got)
+	}
+	restore()
+	if got := os.Getenv("OPENMESSAGES_DEMO"); got != "existing" {
+		t.Fatalf("OPENMESSAGES_DEMO=%q, want existing after restore", got)
+	}
 }

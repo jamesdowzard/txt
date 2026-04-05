@@ -23,7 +23,18 @@ import (
 	"github.com/maxghenis/openmessage/internal/web"
 )
 
-func RunServe(logger zerolog.Logger) error {
+type serveOptions struct {
+	demo bool
+}
+
+func RunServe(logger zerolog.Logger, args ...string) error {
+	opts, err := parseServeOptions(args)
+	if err != nil {
+		return err
+	}
+	restoreEnv := configureServeEnv(opts)
+	defer restoreEnv()
+
 	a, err := app.New(logger)
 	if err != nil {
 		return fmt.Errorf("init app: %w", err)
@@ -56,7 +67,7 @@ func RunServe(logger zerolog.Logger) error {
 	}
 	a.OnIncomingMessage = macNotifier.NotifyIncomingMessage
 
-	isDemo := os.Getenv("OPENMESSAGES_DEMO") != ""
+	isDemo := app.DemoMode()
 
 	// Connect to Google Messages (skip in demo mode)
 	if !isDemo {
@@ -249,6 +260,39 @@ func RunServe(logger zerolog.Logger) error {
 	<-sigCh
 	logger.Info().Msg("Shutting down")
 	return nil
+}
+
+func RunDemo(logger zerolog.Logger) error {
+	return RunServe(logger, "--demo")
+}
+
+func parseServeOptions(args []string) (serveOptions, error) {
+	opts := serveOptions{}
+	for _, arg := range args {
+		switch arg {
+		case "--demo", "--mock":
+			opts.demo = true
+		case "":
+		default:
+			return serveOptions{}, fmt.Errorf("unknown serve option: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func configureServeEnv(opts serveOptions) func() {
+	if !opts.demo {
+		return func() {}
+	}
+	previous, hadPrevious := os.LookupEnv("OPENMESSAGES_DEMO")
+	_ = os.Setenv("OPENMESSAGES_DEMO", "1")
+	return func() {
+		if hadPrevious {
+			_ = os.Setenv("OPENMESSAGES_DEMO", previous)
+			return
+		}
+		_ = os.Unsetenv("OPENMESSAGES_DEMO")
+	}
 }
 
 // LogLevel returns the zerolog level based on OPENMESSAGES_LOG_LEVEL env var.

@@ -16,9 +16,10 @@ func main() {
 		With().Timestamp().Logger().Level(level)
 
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: openmessage <pair|serve|send|import>")
+		fmt.Fprintln(os.Stderr, "Usage: openmessage <pair|serve|demo|send|import>")
 		fmt.Fprintln(os.Stderr, "  pair [--google|--google-file path]       - Pair with your phone via QR or Google account cookies")
-		fmt.Fprintln(os.Stderr, "  serve                                     - Start the local web UI and MCP transports")
+		fmt.Fprintln(os.Stderr, "  serve [--demo|--mock]                    - Start the local web UI and MCP transports")
+		fmt.Fprintln(os.Stderr, "  demo                                     - Start a seeded fake-data UI with live transports disabled")
 		fmt.Fprintln(os.Stderr, "  send <conversation_id> <msg>              - Send message to a conversation")
 		fmt.Fprintln(os.Stderr, "  send-group <phone1,phone2,...> <msg>       - Send group message (MMS)")
 		fmt.Fprintln(os.Stderr, "  import gchat <groups-dir> [--email you@]  - Import Google Chat Takeout")
@@ -33,7 +34,9 @@ func main() {
 	case "pair":
 		err = cmd.RunPair(logger, os.Args[2:]...)
 	case "serve":
-		err = cmd.RunServe(logger)
+		err = cmd.RunServe(logger, os.Args[2:]...)
+	case "demo":
+		err = cmd.RunDemo(logger)
 	case "send":
 		if len(os.Args) < 4 {
 			fmt.Fprintln(os.Stderr, "Usage: openmessage send <conversation_id> <message>")
@@ -61,7 +64,7 @@ func main() {
 		err = cmd.RunDebugMedia(logger, os.Args[2])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, "Usage: openmessage <pair|serve|send|import>")
+		fmt.Fprintln(os.Stderr, "Usage: openmessage <pair|serve|demo|send|import>")
 		os.Exit(1)
 	}
 

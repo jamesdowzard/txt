@@ -59,6 +59,25 @@ When `serve` is launched by an MCP client over pipes, it also serves MCP on stdi
 
 After `serve` is running, open the local UI and link WhatsApp from the Connections surface. OpenMessage keeps that bridge local and syncs it into the same inbox as Google Messages.
 
+### 3b. Safe demo mode for screenshots and recordings
+
+```bash
+./openmessage demo
+```
+
+or:
+
+```bash
+./openmessage serve --demo
+```
+
+Demo mode starts the same local UI on the normal port, but:
+- uses a fresh temporary data directory instead of your real message store
+- seeds fake SMS and WhatsApp conversations for screenshots and demos
+- disables live Google Messages, WhatsApp, and local desktop import sync
+
+This is the safest way to capture website screenshots, App Store assets, or demo recordings without real messages bleeding back in.
+
 ### 4. Connect to Claude Code
 
 Add to `~/.mcp.json`:
@@ -156,6 +175,7 @@ npx playwright install chromium
 npm run test:e2e     # Run browser-level web UI tests
 ./openmessage pair  # Pair with phone
 ./openmessage serve # Start server
+./openmessage demo  # Start isolated fake-data demo mode
 ```
 
 ## License

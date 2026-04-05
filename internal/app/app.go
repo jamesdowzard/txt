@@ -129,6 +129,7 @@ type App struct {
 	WhatsApp         *whatsapplive.Bridge
 	statusMu         sync.Mutex
 	googleLastError  string
+	tempDataDir      string
 }
 
 type GoogleStatusSnapshot struct {
@@ -146,24 +147,43 @@ func DefaultDataDir() string {
 	return filepath.Join(home, ".local", "share", "openmessage")
 }
 
+func DemoMode() bool {
+	value := strings.TrimSpace(os.Getenv("OPENMESSAGES_DEMO"))
+	if value == "" {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
 func New(logger zerolog.Logger) (*App, error) {
 	dataDir := DefaultDataDir()
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-
-	// In demo mode, use a temp DB so we never touch real data
-	dbPath := filepath.Join(dataDir, "messages.db")
-	if os.Getenv("OPENMESSAGES_DEMO") != "" {
+	tempDataDir := ""
+	if DemoMode() {
 		tmpDir, err := os.MkdirTemp("", "openmessage-demo-*")
 		if err != nil {
 			return nil, fmt.Errorf("create temp dir: %w", err)
 		}
-		dbPath = filepath.Join(tmpDir, "demo.db")
+		dataDir = tmpDir
+		tempDataDir = tmpDir
+	}
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		if tempDataDir != "" {
+			_ = os.RemoveAll(tempDataDir)
+		}
+		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
+	dbPath := filepath.Join(dataDir, "messages.db")
 	store, err := db.New(dbPath)
 	if err != nil {
+		if tempDataDir != "" {
+			_ = os.RemoveAll(tempDataDir)
+		}
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	if report, err := store.RepairLegacyArtifacts(); err != nil {
@@ -192,12 +212,18 @@ func New(logger zerolog.Logger) (*App, error) {
 	}
 
 	// Seed demo data
-	if os.Getenv("OPENMESSAGES_DEMO") != "" {
+	if DemoMode() {
 		if err := store.SeedDemo(); err != nil {
 			store.Close()
+			if tempDataDir != "" {
+				_ = os.RemoveAll(tempDataDir)
+			}
 			return nil, fmt.Errorf("seed demo data: %w", err)
 		}
-		logger.Info().Str("db", dbPath).Msg("Demo mode — seeded fake data")
+		logger.Info().
+			Str("data_dir", dataDir).
+			Str("db", dbPath).
+			Msg("Demo mode — using isolated fake data")
 	}
 
 	sessionPath := filepath.Join(dataDir, "session.json")
@@ -209,6 +235,7 @@ func New(logger zerolog.Logger) (*App, error) {
 		DataDir:             dataDir,
 		SessionPath:         sessionPath,
 		WhatsAppSessionPath: whatsAppSessionPath,
+		tempDataDir:         tempDataDir,
 	}
 	return app, nil
 }
@@ -447,5 +474,10 @@ func (a *App) Close() {
 	}
 	if a.Store != nil {
 		a.Store.Close()
+	}
+	if a.tempDataDir != "" {
+		if err := os.RemoveAll(a.tempDataDir); err != nil {
+			a.Logger.Warn().Err(err).Str("dir", a.tempDataDir).Msg("Failed to remove demo temp data dir")
+		}
 	}
 }
