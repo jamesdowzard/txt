@@ -6,6 +6,8 @@ import { SiteHeader } from "../components/site-header";
 import {
   claudeMcpCommand,
   downloadUrl,
+  faqItems,
+  howItWorksPoints,
   repoUrl,
   setupColumns
 } from "../data/site-content";
@@ -132,7 +134,7 @@ export default function HomePage() {
       </section>
 
       {/* Workflow screenshot */}
-      <section className="border-b border-[var(--border)]">
+      <section id="ai" className="border-b border-[var(--border)]">
         <div className="mx-auto grid max-w-[1520px] gap-14 px-6 py-20 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,380px)] lg:items-center lg:px-10">
           <div className="overflow-hidden rounded-[2.3rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.74)] shadow-[var(--panel-shadow)]">
             <Image
@@ -159,6 +161,42 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* How it works */}
+      <section id="how-it-works" className="border-b border-[var(--border)]">
+        <div className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+          <div className="grid gap-14 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+            <div>
+              <div className="eyebrow">How it works</div>
+              <h2 className="mt-5 max-w-[24rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
+                WhatsApp runs as a live local route, not a static import.
+              </h2>
+              <p className="mt-5 max-w-[28rem] text-base leading-7 text-[var(--text-secondary)]">
+                OpenMessage links WhatsApp on your Mac, writes it into the same local inbox
+                as Google Messages, and exposes that shared state to the desktop app and MCP.
+              </p>
+              <div className="mt-7">
+                <ActionLink href="/blog/how-openmessage-added-whatsapp">
+                  Read the technical write-up
+                </ActionLink>
+              </div>
+            </div>
+
+            <div className="grid gap-8 md:grid-cols-3">
+              {howItWorksPoints.map((point) => (
+                <div key={point.title} className="border-t border-[var(--border)] pt-6">
+                  <h3 className="text-[1.22rem] font-semibold tracking-[-0.04em] text-[var(--text-primary)]">
+                    {point.title}
+                  </h3>
+                  <p className="mt-3 text-base leading-7 text-[var(--text-secondary)]">
+                    {point.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Setup */}
       <section id="setup" className="border-b border-[var(--border)]">
         <div className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
@@ -171,6 +209,56 @@ export default function HomePage() {
             {setupColumns.map((column, index) => (
               <SetupColumn key={column.title} column={column} index={index} />
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section id="faq" className="border-b border-[var(--border)]">
+        <div className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+          <div className="grid gap-14 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+            <div>
+              <div className="eyebrow">FAQ</div>
+              <h2 className="mt-5 max-w-[24rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
+                The WhatsApp question, answered once.
+              </h2>
+              <p className="mt-5 max-w-[28rem] text-base leading-7 text-[var(--text-secondary)]">
+                Most people want to know whether OpenMessage is live, local, and trustworthy.
+                That is the right lens.
+              </p>
+            </div>
+
+            <div className="grid gap-4">
+              {faqItems.map((item) => (
+                <details
+                  key={item.question}
+                  className="group rounded-[1.6rem] border border-[var(--border)] bg-[color:rgba(9,17,29,0.7)] px-6 py-5"
+                >
+                  <summary className="cursor-pointer list-none text-[1.05rem] font-semibold tracking-[-0.03em] text-[var(--text-primary)] marker:hidden">
+                    <span className="flex items-center justify-between gap-6">
+                      <span>{item.question}</span>
+                      <span className="text-[var(--text-muted)] transition-transform group-open:rotate-45">
+                        +
+                      </span>
+                    </span>
+                  </summary>
+                  <p className="mt-4 max-w-[44rem] text-base leading-7 text-[var(--text-secondary)]">
+                    {item.answer}
+                    {item.question === "Where can I read the technical details?" ? (
+                      <>
+                        {" "}
+                        <a
+                          href="/blog/how-openmessage-added-whatsapp"
+                          className="text-[var(--accent-strong)] transition-colors hover:text-[var(--text-primary)]"
+                        >
+                          Read the post.
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
+                </details>
+              ))}
+            </div>
           </div>
         </div>
       </section>

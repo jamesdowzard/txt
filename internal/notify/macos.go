@@ -129,10 +129,9 @@ func (n *MacOSNotifier) remember(messageID string) bool {
 
 func appleScriptNotification(title, body string) string {
 	return fmt.Sprintf(
-		"display notification %s with title %s subtitle %s",
+		"display notification %s with title %s",
 		appleScriptString(body),
 		appleScriptString(title),
-		appleScriptString("OpenMessage"),
 	)
 }
 

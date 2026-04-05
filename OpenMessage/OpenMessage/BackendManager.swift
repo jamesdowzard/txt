@@ -102,6 +102,7 @@ final class BackendManager: ObservableObject {
             "OPENMESSAGES_DATA_DIR": dataDir,
             "OPENMESSAGES_LOG_LEVEL": "info",
             "OPENMESSAGES_APP_SANDBOX": "1",
+            "OPENMESSAGES_MACOS_NOTIFICATIONS": "1",
             "HOME": NSHomeDirectory(),
             "PATH": "/usr/local/bin:/usr/bin:/bin",
         ]

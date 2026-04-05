@@ -37,6 +37,61 @@ export const workflowSteps = [
   }
 ];
 
+export const howItWorksPoints = [
+  {
+    title: "Linked-device WhatsApp session",
+    body: "OpenMessage pairs WhatsApp as a live linked device on your own machine, so new messages, typing, receipts, and media can flow into the desktop app in real time."
+  },
+  {
+    title: "One local message store",
+    body: "Google Messages and WhatsApp both normalize into the same local inbox, search index, and route-aware UI instead of living behind separate browser mirrors."
+  },
+  {
+    title: "Same runtime for the app and MCP",
+    body: "The local backend that powers the app is also what Claude and other MCP clients connect to, so the assistant sees the same thread state you do."
+  }
+];
+
+export const faqItems = [
+  {
+    question: "How is WhatsApp support possible?",
+    answer:
+      "OpenMessage uses a live linked-device architecture on your Mac. WhatsApp connects locally, then syncs messages, media, typing, and receipts into the same local store as your other routes."
+  },
+  {
+    question: "Does OpenMessage proxy my messages through your servers?",
+    answer:
+      "No required OpenMessage cloud account is involved in normal use. Messages, contacts, diagnostics, and bridge sessions stay local-first on your machine."
+  },
+  {
+    question: "What works today on WhatsApp?",
+    answer:
+      "Text, media, voice notes, typing indicators, read-state rendering, desktop notifications, grouped routes, and MCP-aware search and drafting are already in the app."
+  },
+  {
+    question: "Where can I read the technical details?",
+    answer:
+      "There are technical write-ups covering both WhatsApp and Google Messages, including the local runtime, pairing model, and why OpenMessage keeps these routes inside one shared local inbox."
+  }
+];
+
+export const blogPosts = [
+  {
+    slug: "how-openmessage-added-google-messages",
+    title: "How OpenMessage added Google Messages",
+    description:
+      "The pairing model, live event path, local inbox, and MCP runtime behind Google Messages in OpenMessage.",
+    eyebrow: "Engineering note"
+  },
+  {
+    slug: "how-openmessage-added-whatsapp",
+    title: "How OpenMessage added live WhatsApp support",
+    description:
+      "The local bridge, linked-device model, shared inbox, and MCP runtime behind WhatsApp in OpenMessage.",
+    eyebrow: "Engineering note"
+  }
+];
+
 export const setupColumns = [
   {
     title: "macOS app",

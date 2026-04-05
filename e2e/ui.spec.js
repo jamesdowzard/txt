@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 const hikingDraft = 'Count me in for Saturday! Lands End trail looks clear — 62°F and sunny. Want me to bring snacks?';
 
 async function openConversation(page, name) {
-  await page.getByText(name, { exact: true }).click();
+  await page.locator('#conversation-list .convo-name').getByText(name, { exact: true }).first().click();
   await expect(page.locator('#chat-header-name')).toHaveText(name);
 }
 
@@ -340,6 +340,32 @@ test('keeps the newest message visible when the thread viewport shrinks', async 
 
   await page.locator('#compose-bar').evaluate((el) => {
     el.style.paddingBottom = '260px';
+  });
+
+  await expectLastMessageVisible(page);
+  await expectThreadNearBottom(page);
+});
+
+test('stays pinned when a transient scroll event fires during late message growth', async ({ page }) => {
+  await openConversation(page, 'Paged Thread');
+  await expect(page.locator('#messages-area .msg')).toHaveCount(100);
+  await expectThreadNearBottom(page);
+  await expectLastMessageVisible(page);
+
+  await page.evaluate(() => {
+    const area = document.getElementById('messages-area');
+    const messages = area?.querySelectorAll('.msg');
+    const anchorMessage = messages && messages.length > 1 ? messages[messages.length - 2] : null;
+    if (!area || !anchorMessage) return;
+
+    const filler = document.createElement('div');
+    filler.className = 'e2e-growth-filler';
+    filler.style.height = '220px';
+    filler.style.marginTop = '12px';
+    filler.textContent = 'Late growth after render';
+    anchorMessage.appendChild(filler);
+
+    area.dispatchEvent(new Event('scroll'));
   });
 
   await expectLastMessageVisible(page);

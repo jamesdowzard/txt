@@ -2,8 +2,9 @@ import { downloadUrl } from "../data/site-content";
 
 const navItems = [
   { href: "/#features", label: "Product" },
+  { href: "/#how-it-works", label: "How it works" },
   { href: "/#setup", label: "Setup" },
-  { href: "/#ai", label: "MCP" }
+  { href: "/blog", label: "Blog" }
 ];
 
 export function SiteHeader({ compact = false, overlay = false }) {

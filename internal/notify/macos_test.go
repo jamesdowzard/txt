@@ -66,7 +66,7 @@ func TestMacOSNotifierSkipsOutgoingMessages(t *testing.T) {
 
 func TestAppleScriptNotificationEscapesQuotes(t *testing.T) {
 	script := appleScriptNotification(`Jenn "J"`, `He said "hi"`)
-	want := `display notification "He said \"hi\"" with title "Jenn \"J\"" subtitle "OpenMessage"`
+	want := `display notification "He said \"hi\"" with title "Jenn \"J\""`
 	if script != want {
 		t.Fatalf("script = %q, want %q", script, want)
 	}

@@ -3486,17 +3486,12 @@ body::after {
 
     <!-- Empty state (shown when no conversation selected) -->
     <div class="empty-state" id="empty-state">
-      <div class="empty-state-kicker">Thread Workspace</div>
       <div class="empty-state-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </div>
-      <h2 id="empty-state-title">Select a conversation</h2>
-      <p id="empty-state-copy">Open a thread to review history, send replies, and manage AI drafts from the same surface.</p>
-      <div class="empty-state-notes" id="empty-state-notes">
-        <span>Live Updates</span>
-        <span>Search</span>
-        <span>Draft Actions</span>
-      </div>
+      <h2 id="empty-state-title">No conversations yet</h2>
+      <p id="empty-state-copy"></p>
+      <div class="empty-state-notes" id="empty-state-notes"></div>
       <button class="empty-state-cta" id="empty-state-cta">Start New Thread</button>
     </div>
 
@@ -5112,6 +5107,9 @@ body::after {
   let pendingBottomScrollFrame = 0;
   let threadContentResizeObserver = null;
   let threadViewportResizeObserver = null;
+  let threadIgnoreScrollSyncUntil = 0;
+  let threadScrollIntentUntil = 0;
+  let threadPointerScrollActive = false;
 
   function resetLoadedThreadState() {
     activeThreadToken += 1;
@@ -5136,6 +5134,9 @@ body::after {
     loadingOlderMessages = false;
     lastThreadSignature = '';
     threadShouldFollowBottom = true;
+    threadIgnoreScrollSyncUntil = 0;
+    threadScrollIntentUntil = 0;
+    threadPointerScrollActive = false;
     activeProtocolDetail = '';
     clearThreadFeedback();
   }
@@ -5154,9 +5155,39 @@ body::after {
     threadShouldFollowBottom = isThreadNearBottom();
   }
 
+  function holdThreadBottomFollow(ms = 180) {
+    threadShouldFollowBottom = true;
+    threadIgnoreScrollSyncUntil = Math.max(threadIgnoreScrollSyncUntil, performance.now() + ms);
+  }
+
+  function shouldIgnoreThreadScrollSync() {
+    return threadShouldFollowBottom && performance.now() < threadIgnoreScrollSyncUntil;
+  }
+
+  function armThreadUserScrollIntent(ms = 400) {
+    threadScrollIntentUntil = Math.max(threadScrollIntentUntil, performance.now() + ms);
+  }
+
+  function hasThreadUserScrollIntent() {
+    return threadPointerScrollActive || performance.now() < threadScrollIntentUntil;
+  }
+
+  function scrollThreadToBottom(forceFollow = false) {
+    if (forceFollow) {
+      holdThreadBottomFollow();
+    }
+    if (!$messagesArea) return;
+    holdThreadBottomFollow();
+    const lastNode = $messagesArea.lastElementChild;
+    if (lastNode && typeof lastNode.scrollIntoView === 'function') {
+      lastNode.scrollIntoView({block: 'end'});
+    }
+    $messagesArea.scrollTop = $messagesArea.scrollHeight;
+  }
+
   function scheduleThreadBottomScroll(forceFollow = false) {
     if (forceFollow) {
-      threadShouldFollowBottom = true;
+      holdThreadBottomFollow();
     }
     if (!threadShouldFollowBottom || !$messagesArea) return;
     if (pendingBottomScrollFrame) {
@@ -5165,11 +5196,11 @@ body::after {
     pendingBottomScrollFrame = requestAnimationFrame(() => {
       pendingBottomScrollFrame = 0;
       if (!threadShouldFollowBottom || !$messagesArea) return;
-      const lastNode = $messagesArea.lastElementChild;
-      if (lastNode && typeof lastNode.scrollIntoView === 'function') {
-        lastNode.scrollIntoView({block: 'end'});
-      }
-      $messagesArea.scrollTop = $messagesArea.scrollHeight;
+      scrollThreadToBottom(forceFollow);
+      requestAnimationFrame(() => {
+        if (!threadShouldFollowBottom || !$messagesArea) return;
+        scrollThreadToBottom();
+      });
     });
   }
 
@@ -5533,8 +5564,7 @@ body::after {
       $messagesArea.scrollTop = $messagesArea.scrollHeight - previousScrollHeight + previousScrollTop;
       syncThreadBottomFollowState();
     } else if (stickToBottom) {
-      threadShouldFollowBottom = true;
-      $messagesArea.scrollTop = $messagesArea.scrollHeight;
+      scrollThreadToBottom(true);
       scheduleThreadBottomScroll(true);
     } else {
       $messagesArea.scrollTop = previousScrollTop;
@@ -5554,7 +5584,7 @@ body::after {
     const threadToken = activeThreadToken;
     const previousScrollTop = $messagesArea.scrollTop;
     const previousScrollHeight = $messagesArea.scrollHeight;
-    const wasNearBottom = !older && isThreadNearBottom();
+    const wasNearBottom = !older && (threadShouldFollowBottom || isThreadNearBottom());
 
     if (older) loadingOlderMessages = true;
 
@@ -5613,11 +5643,30 @@ body::after {
   }
 
   $messagesArea.addEventListener('scroll', () => {
-    syncThreadBottomFollowState();
+    if (hasThreadUserScrollIntent() && !shouldIgnoreThreadScrollSync()) {
+      syncThreadBottomFollowState();
+    }
     if (!activeConvoId || loadingOlderMessages || !hasOlderMessages) return;
     if ($messagesArea.scrollTop < 120) {
       loadMessages(activeConvoId, {older: true});
     }
+  });
+
+  ['wheel', 'touchstart', 'touchmove'].forEach((eventName) => {
+    $messagesArea.addEventListener(eventName, () => {
+      armThreadUserScrollIntent();
+    }, {passive: true});
+  });
+
+  $messagesArea.addEventListener('pointerdown', () => {
+    threadPointerScrollActive = true;
+    armThreadUserScrollIntent(1200);
+  });
+
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((eventName) => {
+    window.addEventListener(eventName, () => {
+      threadPointerScrollActive = false;
+    }, {passive: true});
   });
 
   $messagesArea.addEventListener('load', (event) => {
@@ -5942,30 +5991,24 @@ body::after {
     if (!$emptyStateTitle || activeConvoId) return;
 
     const noConversations = allConversations.length === 0;
-    let title = 'Select a conversation';
-    let copy = 'Open a thread to review history, send replies, and manage AI drafts from the same surface.';
-    let notes = ['Live Updates', 'Search', 'Draft Actions'];
+    let title = 'No conversations yet';
+    let copy = '';
+    let notes = [];
     let action = 'new';
     let cta = 'Start New Thread';
 
     if (!googleStatus.paired && !whatsAppStatus.paired && !whatsAppStatus.connected) {
       title = 'Pair a transport to get started';
-      copy = 'Open Connections to pair Google Messages for SMS and RCS, or link WhatsApp for live sync.';
-      notes = ['Google Messages', 'WhatsApp', 'Local-first'];
+      copy = 'Connect Google Messages or WhatsApp to start syncing.';
+      notes = [];
       action = 'open-connections';
       cta = 'Open Connections';
     } else if (!googleStatus.connected && googleStatus.paired && !googleStatus.needs_pairing) {
       title = noConversations ? 'Reconnect Google Messages' : 'Live sync is paused';
-      copy = 'Your local message history is still here, but new SMS and RCS updates will not arrive until Google Messages reconnects.';
-      notes = ['Reconnect SMS', 'WhatsApp still local', 'Search existing history'];
+      copy = 'New messages will not arrive until Google Messages reconnects.';
+      notes = [];
       action = 'reconnect-google';
-      cta = 'Reconnect Google Messages';
-    } else if (noConversations) {
-      title = 'Your inbox is ready';
-      copy = 'Start a new thread or wait for your connected transports to sync recent history into OpenMessage.';
-      notes = ['Start from SMS', 'Search everything', 'Live sync'];
-      action = 'new';
-      cta = 'Start New Thread';
+      cta = 'Reconnect';
     }
 
     $emptyStateTitle.textContent = title;
@@ -6346,8 +6389,6 @@ body::after {
   }
 
   // ─── Load Conversations ───
-  const isScreenshotMode = new URLSearchParams(location.search).has('screenshot');
-  let screenshotAutoClicked = false;
   async function loadConversations() {
     try {
       const convos = await fetchJSON('/api/conversations?limit=200');
@@ -6371,9 +6412,8 @@ body::after {
         }
         pendingDeepLinkConversationID = requestedConversationID;
       }
-      // In screenshot mode, auto-click the first conversation after render
-      if (!requestedConversationID && isScreenshotMode && !screenshotAutoClicked && conversations.length > 0) {
-        screenshotAutoClicked = true;
+      // Auto-select the most recent conversation when none is specified
+      if (!requestedConversationID && !activeConvoId && conversations.length > 0) {
         const first = document.querySelector('.convo-item');
         if (first) first.click();
       }
@@ -6830,10 +6870,6 @@ body::after {
   loadConversations();
   checkStatus();
 
-  // Screenshot mode: hide banner
-  if (isScreenshotMode) {
-    $connectionBanner.style.display = 'none';
-  }
 })();
 </script>
 </body>
