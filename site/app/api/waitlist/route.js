@@ -49,13 +49,16 @@ export async function POST(request) {
   formBody.set("_template", "table");
 
   let response;
+  let responseText = "";
 
   try {
     response = await fetch(submitUrl, {
       method: "POST",
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://openmessage.ai",
+        Referer: "https://openmessage.ai/"
       },
       body: formBody.toString(),
       cache: "no-store"
@@ -68,9 +71,35 @@ export async function POST(request) {
     );
   }
 
+  responseText = await response.text().catch(() => "");
+
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    console.error("Waitlist submit rejected:", response.status, errorText);
+    console.error("Waitlist submit rejected:", response.status, responseText);
+    return NextResponse.json(
+      { error: "Could not save your email right now. Try again shortly." },
+      { status: 502 }
+    );
+  }
+
+  let responseData = null;
+
+  try {
+    responseData = responseText ? JSON.parse(responseText) : null;
+  } catch {
+    responseData = null;
+  }
+
+  if (responseData?.success === "false") {
+    const message = `${responseData?.message || ""}`;
+    console.error("Waitlist submit failed:", message);
+
+    if (/activation/i.test(message)) {
+      return NextResponse.json(
+        { error: "Updates signup is being activated right now. Try again in a few minutes." },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
       { error: "Could not save your email right now. Try again shortly." },
       { status: 502 }
