@@ -52,7 +52,7 @@ export default function PrivacyPage() {
             <li><strong>To OpenMessage:</strong> nothing. We do not operate an OpenMessage cloud backend for message sync, telemetry, or analytics.</li>
             <li><strong>To AI tools:</strong> only when you choose to connect a local MCP client or send content to an external model provider from your own machine.</li>
             <li><strong>For link previews:</strong> preview metadata is fetched directly from your device to the public URL. Private and localhost-style addresses are intentionally refused.</li>
-            <li><strong>For product updates:</strong> if you submit your email through the website&apos;s updates form, that address and your optional interest are stored privately in the site&apos;s Vercel project so OpenMessage can send product updates or tester invites.</li>
+            <li><strong>For product updates:</strong> if you submit your email through the website&apos;s updates form, that address and your optional interest are stored as encrypted signup records in the site&apos;s Vercel project so OpenMessage can send product updates or tester invites.</li>
           </ul>
 
           <h2>Third-party services</h2>

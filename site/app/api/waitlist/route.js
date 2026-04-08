@@ -1,3 +1,4 @@
+import { createCipheriv, randomBytes } from "node:crypto";
 import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 
@@ -20,6 +21,7 @@ export async function POST(request) {
   const interest = `${payload?.interest || ""}`.trim();
   const website = `${payload?.website || ""}`.trim();
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+  const encryptionKey = process.env.WAITLIST_ENCRYPTION_KEY;
 
   if (website) {
     return NextResponse.json({ ok: true, message: "Thanks." });
@@ -33,8 +35,8 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid interest selection." }, { status: 400 });
   }
 
-  if (!blobToken) {
-    console.error("BLOB_READ_WRITE_TOKEN is not configured.");
+  if (!blobToken || !encryptionKey) {
+    console.error("Waitlist storage is not configured.");
     return NextResponse.json(
       { error: "Updates are not configured right now. Email max@maxghenis.com instead." },
       { status: 503 }
@@ -43,22 +45,40 @@ export async function POST(request) {
 
   try {
     const submittedAt = new Date().toISOString();
-    const pathname = `waitlist/${submittedAt.replaceAll(":", "-")}-${crypto.randomUUID()}.json`;
+    const pathname = `waitlist/${submittedAt.slice(0, 10)}/${crypto.randomUUID()}.json`;
+    const iv = randomBytes(12);
+    const key = Buffer.from(encryptionKey, "hex");
+
+    if (key.length !== 32) {
+      throw new Error("WAITLIST_ENCRYPTION_KEY must be 32 bytes (64 hex chars).");
+    }
+
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const plaintext = JSON.stringify({
+      email,
+      interest: interest || "general",
+      submittedAt,
+      source: "openmessage.ai"
+    });
+    const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
 
     await put(
       pathname,
       JSON.stringify(
         {
-          email,
-          interest: interest || "general",
+          version: 1,
+          algorithm: "aes-256-gcm",
           submittedAt,
-          source: "openmessage.ai"
+          iv: iv.toString("base64"),
+          tag: tag.toString("base64"),
+          ciphertext: ciphertext.toString("base64")
         },
         null,
         2
       ),
       {
-        access: "private",
+        access: "public",
         addRandomSuffix: false,
         contentType: "application/json"
       }
