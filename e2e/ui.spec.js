@@ -7,6 +7,11 @@ async function openConversation(page, name) {
   await expect(page.locator('#chat-header-name')).toHaveText(name);
 }
 
+async function openPlatforms(page) {
+  await page.keyboard.press('Control+,');
+  await expect(page.locator('#wa-overlay.show h2')).toHaveText('Platforms');
+}
+
 async function expectThreadNearBottom(page) {
   await expect
     .poll(async () => page.locator('#messages-area').evaluate((el) => {
@@ -26,6 +31,23 @@ async function expectLastMessageVisible(page) {
       return lastRect.bottom <= containerRect.bottom && lastRect.top >= containerRect.top;
     }))
     .toBe(true);
+}
+
+async function installFakeNotifications(page) {
+  await page.evaluate(() => {
+    const created = [];
+    function FakeNotification(title, options = {}) {
+      created.push({ title, body: options.body || '', tag: options.tag || '' });
+      this.onclick = null;
+    }
+    FakeNotification.permission = 'default';
+    FakeNotification.requestPermission = async () => {
+      FakeNotification.permission = 'granted';
+      return 'granted';
+    };
+    window.__openMessageNotifications = created;
+    window.Notification = FakeNotification;
+  });
 }
 
 test.beforeEach(async ({ page, request }) => {
@@ -57,6 +79,7 @@ test('opens a deep-linked conversation from the URL', async ({ page }) => {
 
 test('shows platform badges and filters threads by source', async ({ page }) => {
   await expect(page.locator('#sidebar-source-filters')).toContainText('WhatsApp');
+  await expect(page.locator('#sidebar-source-filters')).toContainText('Signal');
   await expect(page.getByRole('button', { name: /WhatsApp 6/i })).toBeVisible();
 
   await page.getByRole('button', { name: /WhatsApp 6/i }).click();
@@ -69,6 +92,196 @@ test('shows platform badges and filters threads by source', async ({ page }) => 
 
   await openConversation(page, 'Weekend Hiking Group');
   await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+});
+
+test('opens the platforms screen from the empty-state onboarding CTA', async ({ page }) => {
+  await page.route('**/api/status', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: false,
+        google: { connected: false, paired: false, needs_pairing: true },
+        whatsapp: { connected: false, paired: false, pairing: false, qr_available: false },
+        signal: { connected: false, paired: false, pairing: false, qr_available: false },
+      }),
+    });
+  });
+  await page.route('**/api/conversations?limit=200', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: '[]',
+    });
+  });
+
+  await page.reload();
+  await expect(page.locator('#empty-state-title')).toHaveText('Add your first platform');
+  await expect(page.locator('#empty-state-cta')).toHaveText('Add platform');
+  await page.locator('#empty-state-cta').click();
+
+  await expect(page.locator('#wa-overlay.show h2')).toHaveText('Platforms');
+  await expect(page.locator('#wa-overlay')).toContainText('Google Messages');
+  await expect(page.locator('#wa-overlay')).toContainText('WhatsApp');
+  await expect(page.locator('#wa-overlay')).toContainText('Signal');
+  await expect(page.locator('#signal-history-note')).toContainText('Transfer Message History');
+});
+
+test('shows live Signal history import progress after pairing starts', async ({ page }) => {
+  await page.route('**/api/signal/status', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: true,
+        paired: true,
+        history_sync: {
+          running: true,
+          started_at: 1700000000000,
+          imported_conversations: 3,
+          imported_messages: 42,
+        },
+      }),
+    });
+  });
+
+  await openPlatforms(page);
+
+  await expect(page.locator('#signal-status-pill')).toHaveText('Importing history');
+  await expect(page.locator('#signal-helper')).toContainText('still importing older history');
+  await expect(page.locator('#signal-history-note')).toContainText('3 chats');
+  await expect(page.locator('#signal-history-note')).toContainText('42 messages');
+});
+
+test('offers a direct Google pairing handoff when Google Messages is unpaired', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__openMessageClipboard = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.__openMessageClipboard = text;
+        },
+      },
+    });
+  });
+  await page.route('**/api/status', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: true,
+        google: {
+          connected: false,
+          paired: false,
+          needs_pairing: true,
+        },
+        whatsapp: {
+          connected: true,
+          paired: true,
+        },
+        signal: {
+          connected: true,
+          paired: true,
+        },
+      }),
+    });
+  });
+
+  await page.reload();
+  await openPlatforms(page);
+  await expect(page.locator('#gm-reconnect-btn')).toHaveText('Copy pair command');
+  await page.locator('#gm-reconnect-btn').click();
+
+  await expect.poll(async () => page.evaluate(() => window.__openMessageClipboard)).toBe('openmessage pair');
+  await expect(page.locator('#thread-feedback')).toContainText('Pair command copied.');
+});
+
+test('opens a Signal group with slashes in its conversation id', async ({ page }) => {
+  await openConversation(page, 'Strategy Lab');
+
+  await expect(page.locator('#chat-header-name')).toHaveText('Strategy Lab');
+  await expect(page.locator('#messages-area')).toContainText('recent logistics outage');
+  await expect(page.locator('#messages-area')).not.toContainText('Signal is easier for me if you want to reply here.');
+});
+
+test('lets you scroll the platforms screen when pairing cards expand', async ({ page }) => {
+  const qrDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9s1qN9sAAAAASUVORK5CYII=';
+
+  await page.setViewportSize({ width: 1280, height: 620 });
+  await page.route('**/api/whatsapp/status', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: false,
+        paired: false,
+        pairing: true,
+        qr_available: true,
+      }),
+    });
+  });
+  await page.route('**/api/signal/status', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: false,
+        paired: false,
+        pairing: true,
+        qr_available: true,
+      }),
+    });
+  });
+  await page.route('**/api/whatsapp/qr', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        png_data_url: qrDataUrl,
+        expires_at: Date.now() + 60_000,
+      }),
+    });
+  });
+  await page.route('**/api/signal/qr', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        png_data_url: qrDataUrl,
+      }),
+    });
+  });
+
+  await page.reload();
+  await openPlatforms(page);
+
+  const modalBody = page.locator('#wa-overlay .wa-body');
+  await expect
+    .poll(async () => modalBody.evaluate((el) => el.scrollHeight > el.clientHeight))
+    .toBe(true);
+
+  await modalBody.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+
+  await expect
+    .poll(async () => modalBody.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(30);
+});
+
+test('lets you leave a WhatsApp group from the thread header', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept());
+
+  await page.getByRole('button', { name: /WhatsApp 6/i }).click();
+  await openConversation(page, 'Weekend Hiking Group');
+
+  await expect(page.locator('#chat-header-leave-group-btn')).toBeVisible();
+  await page.locator('#chat-header-leave-group-btn').click();
+
+  await expect(page.locator('#thread-feedback')).toContainText('Left WhatsApp group.');
+  await expect(page.locator('#conversation-list')).not.toContainText('Weekend Hiking Group');
+  await expect(page.getByRole('button', { name: /WhatsApp 5/i })).toBeVisible();
 });
 
 test('search matches conversation names and updates platform chip counts', async ({ page }) => {
@@ -105,41 +318,51 @@ test('renders clickable links with a social preview card', async ({ page, reques
   await expect(linkedMessage.locator('.msg-link-preview')).toContainText('Example');
 });
 
-test('groups duplicate direct chats by person while keeping network lanes separate', async ({ page }) => {
-  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+test('coalesces duplicate direct chats into one sidebar row with route tabs in the thread header', async ({ page }) => {
+  const jordanRows = page.locator('#conversation-list > .convo-item').filter({
+    has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
+  });
 
-  await expect(jordanCluster).toHaveCount(1);
-  await expect(jordanCluster.locator('.convo-item')).toHaveCount(2);
-  await expect(jordanCluster).toContainText('SMS');
-  await expect(jordanCluster).toContainText('WhatsApp');
+  await expect(jordanRows).toHaveCount(3);
+  await expect(jordanRows.first().locator('.convo-avatar .avatar-platform-stack .platform-chip')).toHaveCount(2);
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await jordanRows.first().click();
   await expect(page.locator('#chat-header-name')).toHaveText('Jordan Rivera');
+  await expect(page.locator('#chat-header-source .chat-route-tab')).toHaveCount(2);
   await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+  await expect(page.locator('#chat-header-source')).toContainText('SMS');
 });
 
-test('switches routes from the left rail while keeping the thread pane minimal', async ({ page }) => {
-  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+test('shows platform markers on avatars instead of direct-row text pills', async ({ page }) => {
+  const sarahRow = page.locator('#conversation-list > .convo-item').filter({ hasText: 'Sarah Chen' }).first();
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await expect(sarahRow.locator('.convo-avatar .avatar-platform-stack .platform-chip')).toHaveCount(1);
+  await expect(sarahRow.locator('.convo-subline .platform-chip')).toHaveCount(0);
+});
+
+test('switches routes from the thread header tabs while keeping the sidebar person-first', async ({ page }) => {
+  const jordanRows = page.locator('#conversation-list > .convo-item').filter({
+    has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
+  });
+
+  await jordanRows.first().click();
   await expect(page.locator('#compose-input')).toBeEnabled();
-  await expect(page.locator('#chat-header-source')).toContainText('WhatsApp');
+  await expect(page.locator('#chat-header-source .chat-route-tab.active')).toContainText('WhatsApp');
   await expect(page.locator('#chat-pane')).not.toContainText('Sending via WhatsApp');
   await expect(page.locator('#chat-pane')).not.toContainText('Replies here');
   await expect(page.locator('#chat-pane')).not.toContainText('Reply route');
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'SMS' }).click();
-  await expect(page.locator('#chat-header-source')).toContainText('SMS');
+  await page.locator('#chat-header-source .chat-route-tab').filter({ hasText: 'SMS' }).click();
+  await expect(page.locator('#chat-header-source .chat-route-tab.active')).toContainText('SMS');
   await expect(page.locator('#compose-input')).toBeEnabled();
 });
 
 test('does not group same-name chats when participant identifiers differ', async ({ page }) => {
-  await expect(page.locator('#conversation-list > .contact-cluster').filter({ hasText: 'Jordan Rivera' })).toHaveCount(1);
   await expect(
     page.locator('#conversation-list > .convo-item').filter({
-      has: page.locator('.convo-name', { hasText: 'Jordan Rivera' }),
+      has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
     })
-  ).toHaveCount(2);
+  ).toHaveCount(3);
 });
 
 test('new message surfaces existing routes for the same number', async ({ page }) => {
@@ -162,6 +385,36 @@ test('sends a message through the compose box', async ({ page }) => {
   await expect(page.locator('#messages-area')).toContainText(outbound);
 });
 
+test('sends a Signal text message through the compose box', async ({ page }) => {
+  const outbound = `Signal outbound ${Date.now()}`;
+
+  await openConversation(page, 'Taylor Price');
+  await expect(page.locator('#chat-header-source')).toContainText('Signal');
+  await page.locator('#compose-input').fill(outbound);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#messages-area')).toContainText(outbound);
+});
+
+test('sends a Signal image attachment through the compose box', async ({ page }) => {
+  await openConversation(page, 'Taylor Price');
+  await expect(page.locator('#chat-header-source')).toContainText('Signal');
+  await page.locator('#file-input').setInputFiles({
+    name: 'signal-photo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z9wAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+
+  await expect(page.locator('#attach-preview')).toHaveClass(/active/);
+  await page.locator('#send-btn').click();
+
+  await expect(page.locator('#attach-preview')).not.toHaveClass(/active/);
+  await expect(page.locator('#messages-area img[src*="/api/media/"]').last()).toBeVisible();
+});
+
 test('keeps the active thread pinned to the bottom after sending', async ({ page }) => {
   const outbound = `Bottom send ${Date.now()}`;
 
@@ -179,9 +432,12 @@ test('keeps the active thread pinned to the bottom after sending', async ({ page
 
 test('sends a WhatsApp text message through the compose box', async ({ page }) => {
   const outbound = `WhatsApp outbound ${Date.now()}`;
-  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+  const jordanRow = page.locator('#conversation-list > .convo-item').filter({
+    has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
+  }).first();
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await jordanRow.click();
+  await expect(page.locator('#chat-header-source .chat-route-tab.active')).toContainText('WhatsApp');
   await page.locator('#compose-input').fill(outbound);
   await page.locator('#send-btn').click();
 
@@ -208,9 +464,12 @@ test('renders read receipts for read messages', async ({ page, request }) => {
 });
 
 test('sends a WhatsApp image attachment through the compose box', async ({ page }) => {
-  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+  const jordanRow = page.locator('#conversation-list > .convo-item').filter({
+    has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
+  }).first();
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await jordanRow.click();
+  await expect(page.locator('#chat-header-source .chat-route-tab.active')).toContainText('WhatsApp');
   await page.locator('#file-input').setInputFiles({
     name: 'wa-photo.png',
     mimeType: 'image/png',
@@ -228,9 +487,12 @@ test('sends a WhatsApp image attachment through the compose box', async ({ page 
 });
 
 test('sends a WhatsApp voice note attachment through the compose box', async ({ page }) => {
-  const jordanCluster = page.locator('.contact-cluster').filter({ hasText: 'Jordan Rivera' });
+  const jordanRow = page.locator('#conversation-list > .convo-item').filter({
+    has: page.locator('.convo-name').getByText('Jordan Rivera', { exact: true }),
+  }).first();
 
-  await jordanCluster.locator('.convo-item').filter({ hasText: 'WhatsApp' }).click();
+  await jordanRow.click();
+  await expect(page.locator('#chat-header-source .chat-route-tab.active')).toContainText('WhatsApp');
   await page.locator('#file-input').setInputFiles({
     name: 'voice-note.ogg',
     mimeType: 'audio/ogg',
@@ -402,20 +664,7 @@ test('shows and clears a typing indicator from live typing events', async ({ pag
 test('shows a desktop notification for an unseen inbound message when enabled', async ({ page, request }) => {
   const inbound = `Notification inbound ${Date.now()}`;
 
-  await page.evaluate(() => {
-    const created = [];
-    function FakeNotification(title, options = {}) {
-      created.push({ title, body: options.body || '', tag: options.tag || '' });
-      this.onclick = null;
-    }
-    FakeNotification.permission = 'default';
-    FakeNotification.requestPermission = async () => {
-      FakeNotification.permission = 'granted';
-      return 'granted';
-    };
-    window.__openMessageNotifications = created;
-    window.Notification = FakeNotification;
-  });
+  await installFakeNotifications(page);
 
   await page.locator('#notif-btn').click();
   await expect(page.locator('#notif-btn')).toHaveClass(/active/);
@@ -437,20 +686,7 @@ test('shows a desktop notification for an unseen inbound message when enabled', 
 test('suppresses desktop notifications for the active visible thread', async ({ page, request }) => {
   const inbound = `Focused thread ${Date.now()}`;
 
-  await page.evaluate(() => {
-    const created = [];
-    function FakeNotification(title, options = {}) {
-      created.push({ title, body: options.body || '', tag: options.tag || '' });
-      this.onclick = null;
-    }
-    FakeNotification.permission = 'default';
-    FakeNotification.requestPermission = async () => {
-      FakeNotification.permission = 'granted';
-      return 'granted';
-    };
-    window.__openMessageNotifications = created;
-    window.Notification = FakeNotification;
-  });
+  await installFakeNotifications(page);
 
   await page.locator('#notif-btn').click();
   await openConversation(page, 'Sarah Chen');
@@ -466,6 +702,87 @@ test('suppresses desktop notifications for the active visible thread', async ({ 
 
   await expect(page.locator('#messages-area')).toContainText(inbound);
   await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(0);
+});
+
+test('lets you mute a thread from the header notification menu', async ({ page, request }) => {
+  const inbound = `Muted inbound ${Date.now()}`;
+
+  await installFakeNotifications(page);
+  await page.locator('#notif-btn').click();
+  await openConversation(page, 'Sarah Chen');
+
+  await page.locator('#chat-header-notification-btn').click();
+  await page.locator('#context-menu .context-menu-item').getByText('Mute notifications', { exact: true }).click();
+
+  await expect(page.locator('#thread-feedback')).toContainText('Notifications set to muted.');
+  await expect(page.locator('#conversation-list .convo-item').filter({ hasText: 'Sarah Chen' }).locator('.notification-mode-badge')).toBeVisible();
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: inbound,
+      conversation_id: 'conv1',
+      sender_name: 'Sarah Chen',
+      sender_number: '+14155551234',
+    },
+  });
+
+  await expect(page.locator('#messages-area')).toContainText(inbound);
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(0);
+});
+
+test('supports mentions-only notifications from the conversation context menu', async ({ page, request }) => {
+  const mutedInbound = `Checking in ${Date.now()}`;
+  const mentionInbound = `Checking in ${Date.now()}`;
+  const marcusRow = page.locator('#conversation-list .convo-item').filter({ hasText: 'Marcus Johnson' }).first();
+
+  await installFakeNotifications(page);
+  await page.locator('#notif-btn').click();
+
+  await marcusRow.click({ button: 'right' });
+  await page.locator('#context-menu .context-menu-item').getByText('Notify on mentions only', { exact: true }).click();
+
+  await expect(page.locator('#thread-feedback')).toContainText('Notifications set to mentions.');
+  await expect(marcusRow.locator('.notification-mode-badge')).toContainText('@');
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: mutedInbound,
+      conversation_id: 'conv2',
+      sender_name: 'Marcus Johnson',
+      sender_number: '+12125559876',
+    },
+  });
+
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(0);
+
+  await request.post('/_e2e/messages', {
+    data: {
+      body: mentionInbound,
+      conversation_id: 'conv2',
+      mentions_me: true,
+      sender_name: 'Marcus Johnson',
+      sender_number: '+12125559876',
+    },
+  });
+
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications.length)).toBe(1);
+  await expect.poll(async () => page.evaluate(() => window.__openMessageNotifications[0]?.body || '')).toBe(mentionInbound);
+});
+
+test('supports message right-click actions', async ({ page }) => {
+  await openConversation(page, 'Sarah Chen');
+
+  const targetMessage = page.locator('#messages-area .msg.received').filter({ hasText: 'Hey! Are you free for dinner tonight?' }).first();
+  await targetMessage.click({ button: 'right' });
+  await expect(page.locator('#context-menu .context-menu-item').getByText('Reply', { exact: true })).toBeVisible();
+  await page.locator('#context-menu .context-menu-item').getByText('Copy text', { exact: true }).click();
+
+  await expect(page.locator('#thread-feedback')).toContainText('Message copied.');
+
+  await targetMessage.click({ button: 'right' });
+  await page.locator('#context-menu .context-menu-item').getByText('Reply', { exact: true }).click();
+  await expect(page.locator('#reply-indicator')).toHaveClass(/show/);
+  await expect(page.locator('#reply-to-text')).toContainText('Hey! Are you free for dinner tonight?');
 });
 
 test('preserves draft edits during SSE refresh', async ({ page, request }) => {

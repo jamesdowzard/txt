@@ -96,6 +96,58 @@ func TestUpsertConversation_InsertAndUpdate(t *testing.T) {
 	})
 }
 
+func TestConversationNotificationModeLifecycle(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID:   "conv-muted",
+		Name:             "Muted",
+		LastMessageTS:    1000,
+		NotificationMode: NotificationModeMentions,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := store.GetConversation("conv-muted")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.NotificationMode != NotificationModeMentions {
+		t.Fatalf("notification_mode = %q, want %q", got.NotificationMode, NotificationModeMentions)
+	}
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "conv-muted",
+		Name:           "Muted renamed",
+		LastMessageTS:  2000,
+	}); err != nil {
+		t.Fatalf("upsert update: %v", err)
+	}
+
+	got, err = store.GetConversation("conv-muted")
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if got.NotificationMode != NotificationModeMentions {
+		t.Fatalf("notification_mode after update = %q, want %q", got.NotificationMode, NotificationModeMentions)
+	}
+
+	if err := store.SetConversationNotificationMode("conv-muted", NotificationModeMuted); err != nil {
+		t.Fatalf("SetConversationNotificationMode(): %v", err)
+	}
+	got, err = store.GetConversation("conv-muted")
+	if err != nil {
+		t.Fatalf("get after set: %v", err)
+	}
+	if got.NotificationMode != NotificationModeMuted {
+		t.Fatalf("notification_mode after set = %q, want %q", got.NotificationMode, NotificationModeMuted)
+	}
+
+	if err := store.SetConversationNotificationMode("conv-muted", "loud"); err == nil {
+		t.Fatal("expected invalid notification mode error")
+	}
+}
+
 func TestGetConversation_NotFound(t *testing.T) {
 	store := newTestStore(t)
 
@@ -274,8 +326,8 @@ func TestMergeConversationIDs(t *testing.T) {
 	}
 	if err := store.UpsertConversation(&Conversation{
 		ConversationID: "whatsapp:14699991654@s.whatsapp.net",
-		Name:           "Jenn Umanzor",
-		Participants:   `[{"name":"Jenn Umanzor","number":"+14699991654"}]`,
+		Name:           "Jamie Rivera",
+		Participants:   `[{"name":"Jamie Rivera","number":"+14699991654"}]`,
 		LastMessageTS:  2000,
 		UnreadCount:    0,
 		SourcePlatform: "whatsapp",
@@ -312,7 +364,7 @@ func TestMergeConversationIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConversation(): %v", err)
 	}
-	if convo.Name != "Jenn Umanzor" {
+	if convo.Name != "Jamie Rivera" {
 		t.Fatalf("name = %q, want canonical name", convo.Name)
 	}
 	if convo.LastMessageTS != 3000 {
@@ -335,6 +387,59 @@ func TestMergeConversationIDs(t *testing.T) {
 	}
 	if len(drafts) != 1 || drafts[0].ConversationID != "whatsapp:14699991654@s.whatsapp.net" {
 		t.Fatalf("drafts after merge = %#v", drafts)
+	}
+}
+
+func TestDeleteConversationRemovesConversationMessagesAndDrafts(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "wa-group",
+		Name:           "Spam Group",
+		IsGroup:        true,
+		LastMessageTS:  1234,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "m1",
+		ConversationID: "wa-group",
+		Body:           "hi",
+		TimestampMS:    1234,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	if err := store.UpsertDraft(&Draft{
+		DraftID:        "d1",
+		ConversationID: "wa-group",
+		Body:           "draft",
+		CreatedAt:      1,
+	}); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+
+	if err := store.DeleteConversation("wa-group"); err != nil {
+		t.Fatalf("DeleteConversation(): %v", err)
+	}
+
+	if _, err := store.GetConversation("wa-group"); err == nil {
+		t.Fatal("expected conversation to be deleted")
+	}
+	msgs, err := store.GetMessagesByConversation("wa-group", 10)
+	if err != nil {
+		t.Fatalf("GetMessagesByConversation(): %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected messages to be deleted, got %d", len(msgs))
+	}
+	drafts, err := store.ListDrafts("wa-group")
+	if err != nil {
+		t.Fatalf("ListDrafts(): %v", err)
+	}
+	if len(drafts) != 0 {
+		t.Fatalf("expected drafts to be deleted, got %d", len(drafts))
 	}
 }
 

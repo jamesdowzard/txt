@@ -212,8 +212,19 @@ export default function HomePage() {
                 you see in the desktop app.
               </p>
             </div>
-            <div className="max-w-[44rem]">
-              <CommandBlock label="Connect Claude">{claudeMcpCommand}</CommandBlock>
+            <div className="grid gap-6">
+              <div className="max-w-[44rem]">
+                <CommandBlock label="Connect Claude">{claudeMcpCommand}</CommandBlock>
+              </div>
+              <div className="overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.78)] shadow-[var(--panel-shadow)]">
+                <Image
+                  src="/hero-command-surface.png"
+                  alt="OpenMessage alongside Claude using MCP to search and draft messages"
+                  width={1800}
+                  height={1020}
+                  className="h-auto w-full"
+                />
+              </div>
             </div>
           </div>
         </div>

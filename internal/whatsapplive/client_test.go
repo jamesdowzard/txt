@@ -273,6 +273,238 @@ func TestBridgeSendTextReconnectsStaleClientBeforeSend(t *testing.T) {
 	}
 }
 
+func TestBridgeLeaveGroupLeavesRemoteAndDeletesLocalThread(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	if err := store.UpsertConversation(&db.Conversation{
+		ConversationID: "whatsapp:120363019999999999@g.us",
+		Name:           "Spam Group",
+		IsGroup:        true,
+		LastMessageTS:  1000,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	if err := store.UpsertMessage(&db.Message{
+		MessageID:      "whatsapp:m1",
+		ConversationID: "whatsapp:120363019999999999@g.us",
+		Body:           "join us",
+		TimestampMS:    1000,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	bridge := &Bridge{
+		store:     store,
+		connected: true,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID:       &ownJID,
+				PushName: "OpenMessage",
+			},
+		},
+	}
+
+	originalLeaveGroup := leaveGroup
+	originalIsConnected := clientIsConnected
+	defer func() {
+		leaveGroup = originalLeaveGroup
+		clientIsConnected = originalIsConnected
+	}()
+	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
+
+	var leftJID watypes.JID
+	leaveGroup = func(_ *whatsmeow.Client, _ context.Context, jid watypes.JID) error {
+		leftJID = jid
+		return nil
+	}
+
+	if err := bridge.LeaveGroup("whatsapp:120363019999999999@g.us"); err != nil {
+		t.Fatalf("LeaveGroup(): %v", err)
+	}
+	if leftJID.String() != "120363019999999999@g.us" {
+		t.Fatalf("left jid = %q, want group jid", leftJID.String())
+	}
+	if _, err := store.GetConversation("whatsapp:120363019999999999@g.us"); err == nil {
+		t.Fatal("expected group conversation to be deleted locally")
+	}
+	msgs, err := store.GetMessagesByConversation("whatsapp:120363019999999999@g.us", 10)
+	if err != nil {
+		t.Fatalf("GetMessagesByConversation(): %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected group messages to be deleted, got %d", len(msgs))
+	}
+}
+
+func TestBridgeLeaveGroupSuppressesLaterStubRecreation(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	const conversationID = "whatsapp:120363019999999999@g.us"
+	if err := store.UpsertConversation(&db.Conversation{
+		ConversationID: conversationID,
+		Name:           "Spam Group",
+		IsGroup:        true,
+		LastMessageTS:  1000,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	groupJID := watypes.NewJID("120363019999999999", watypes.GroupServer)
+	bridge := &Bridge{
+		store:     store,
+		connected: true,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID:       &ownJID,
+				PushName: "OpenMessage",
+			},
+		},
+		logger: zerolog.Nop(),
+	}
+
+	originalLeaveGroup := leaveGroup
+	originalIsConnected := clientIsConnected
+	defer func() {
+		leaveGroup = originalLeaveGroup
+		clientIsConnected = originalIsConnected
+	}()
+	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
+	leaveGroup = func(_ *whatsmeow.Client, _ context.Context, jid watypes.JID) error {
+		if jid != groupJID {
+			t.Fatalf("jid = %q, want %q", jid.String(), groupJID.String())
+		}
+		return nil
+	}
+
+	if err := bridge.LeaveGroup(conversationID); err != nil {
+		t.Fatalf("LeaveGroup(): %v", err)
+	}
+
+	bridge.handleGroupInfo(&waevents.GroupInfo{JID: groupJID})
+
+	if _, err := store.GetConversation(conversationID); err == nil {
+		t.Fatal("expected tombstoned group to stay deleted after later group-info update")
+	}
+}
+
+func TestBridgeLeaveGroupRejectsDirectChats(t *testing.T) {
+	bridge := &Bridge{}
+	err := bridge.LeaveGroup("whatsapp:15551234567@s.whatsapp.net")
+	if err == nil || !strings.Contains(err.Error(), "not a WhatsApp group") {
+		t.Fatalf("LeaveGroup() error = %v, want group validation", err)
+	}
+}
+
+func TestHandleGroupInfoDeletesConversationWhenOwnAccountLeavesGroup(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := db.New(filepath.Join(dataDir, "messages.db"))
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	const conversationID = "whatsapp:120363019999999999@g.us"
+	if err := store.UpsertConversation(&db.Conversation{
+		ConversationID: conversationID,
+		Name:           "Spam Group",
+		IsGroup:        true,
+		LastMessageTS:  1000,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("UpsertConversation(): %v", err)
+	}
+	if err := store.UpsertMessage(&db.Message{
+		MessageID:      "whatsapp:m1",
+		ConversationID: conversationID,
+		Body:           "hi",
+		TimestampMS:    1000,
+		SourcePlatform: "whatsapp",
+	}); err != nil {
+		t.Fatalf("UpsertMessage(): %v", err)
+	}
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	groupJID := watypes.NewJID("120363019999999999", watypes.GroupServer)
+	bridge := &Bridge{
+		store: store,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID: &ownJID,
+			},
+		},
+		logger: zerolog.Nop(),
+	}
+
+	bridge.handleGroupInfo(&waevents.GroupInfo{
+		JID:   groupJID,
+		Name:  &watypes.GroupName{Name: "Spam Group"},
+		Leave: []watypes.JID{ownJID},
+	})
+
+	if _, err := store.GetConversation(conversationID); err == nil {
+		t.Fatal("expected conversation to be deleted after own leave event")
+	}
+	msgs, err := store.GetMessagesByConversation(conversationID, 10)
+	if err != nil {
+		t.Fatalf("GetMessagesByConversation(): %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected group messages to be deleted, got %d", len(msgs))
+	}
+}
+
+func TestHandleGroupInfoOwnJoinClearsSuppressionAndRestoresGroup(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	groupJID := watypes.NewJID("120363019999999999", watypes.GroupServer)
+	conversationID := waConversationID(groupJID)
+	bridge := &Bridge{
+		store:              store,
+		recentlyLeftGroups: map[string]time.Time{conversationID: time.Now().Add(time.Hour)},
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID: &ownJID,
+			},
+		},
+		logger: zerolog.Nop(),
+	}
+
+	bridge.handleGroupInfo(&waevents.GroupInfo{
+		JID:  groupJID,
+		Name: &watypes.GroupName{Name: "Back Again"},
+		Join: []watypes.JID{ownJID},
+	})
+
+	convo, err := store.GetConversation(conversationID)
+	if err != nil {
+		t.Fatalf("GetConversation(): %v", err)
+	}
+	if convo.Name != "Back Again" {
+		t.Fatalf("name = %q, want Back Again", convo.Name)
+	}
+	if bridge.shouldSuppressLeftGroup(conversationID) {
+		t.Fatal("expected own join to clear left-group suppression")
+	}
+}
+
 func TestBridgeSendTextTimeoutStartsReconnect(t *testing.T) {
 	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
 	bridge := &Bridge{
@@ -453,6 +685,154 @@ func TestBridgeProfilePhotoFetchesAndCachesAvatar(t *testing.T) {
 	}
 	if downloadCalls != 1 {
 		t.Fatalf("download calls = %d, want 1", downloadCalls)
+	}
+}
+
+func TestBridgeSendReactionBuildsOutgoingWhatsAppReactionAndUpdatesLocalState(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	bridge := &Bridge{
+		store:     store,
+		connected: true,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID: &ownJID,
+			},
+		},
+	}
+
+	if err := store.UpsertMessage(&db.Message{
+		MessageID:      "whatsapp:target-msg",
+		ConversationID: "whatsapp:15551234567@s.whatsapp.net",
+		SenderName:     "Jamie Rivera",
+		SenderNumber:   "+15551234567",
+		Body:           "hello",
+		TimestampMS:    1700000000000,
+		SourcePlatform: "whatsapp",
+		SourceID:       "target-msg",
+	}); err != nil {
+		t.Fatalf("UpsertMessage(): %v", err)
+	}
+
+	originalSend := sendTextMessage
+	originalIsConnected := clientIsConnected
+	defer func() {
+		sendTextMessage = originalSend
+		clientIsConnected = originalIsConnected
+	}()
+	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
+
+	var capturedTo watypes.JID
+	var capturedMsg *waE2E.Message
+	sendTextMessage = func(_ *whatsmeow.Client, _ context.Context, to watypes.JID, message *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+		capturedTo = to
+		capturedMsg = message
+		return whatsmeow.SendResponse{}, nil
+	}
+
+	if err := bridge.SendReaction("whatsapp:15551234567@s.whatsapp.net", "whatsapp:target-msg", "😂", "add"); err != nil {
+		t.Fatalf("SendReaction(): %v", err)
+	}
+
+	if capturedTo.String() != "15551234567@s.whatsapp.net" {
+		t.Fatalf("sent to %q, want 15551234567@s.whatsapp.net", capturedTo.String())
+	}
+	reaction := extractReactionMessage(capturedMsg)
+	if reaction == nil {
+		t.Fatal("expected outgoing reaction message")
+	}
+	if reaction.GetKey().GetID() != "target-msg" {
+		t.Fatalf("target id = %q, want target-msg", reaction.GetKey().GetID())
+	}
+	if reaction.GetKey().GetFromMe() {
+		t.Fatal("expected reaction target to be marked as not-from-me")
+	}
+	if reaction.GetKey().GetParticipant() != "" {
+		t.Fatalf("participant = %q, want empty for direct chat", reaction.GetKey().GetParticipant())
+	}
+	if reaction.GetText() != "😂" {
+		t.Fatalf("emoji = %q, want 😂", reaction.GetText())
+	}
+
+	msg, err := store.GetMessageByID("whatsapp:target-msg")
+	if err != nil {
+		t.Fatalf("GetMessageByID(): %v", err)
+	}
+	reactions, err := parseStoredReactions(msg.Reactions)
+	if err != nil {
+		t.Fatalf("parseStoredReactions(): %v", err)
+	}
+	if len(reactions) != 1 || reactions[0].Emoji != "😂" || reactions[0].Count != 1 {
+		t.Fatalf("reactions = %#v, want single 😂 reaction", reactions)
+	}
+	if len(reactions[0].Actors) != 1 || reactions[0].Actors[0] != "15551230000@s.whatsapp.net" {
+		t.Fatalf("reaction actors = %#v, want own jid", reactions[0].Actors)
+	}
+}
+
+func TestBridgeSendReactionUsesParticipantForWhatsAppGroupMessages(t *testing.T) {
+	store, err := db.New(":memory:")
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	bridge := &Bridge{
+		store:     store,
+		connected: true,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID: &ownJID,
+			},
+		},
+	}
+
+	if err := store.UpsertMessage(&db.Message{
+		MessageID:      "whatsapp:target-group-msg",
+		ConversationID: "whatsapp:120363019999999999@g.us",
+		SenderName:     "Taylor Price",
+		SenderNumber:   "+15557654321",
+		Body:           "group hello",
+		TimestampMS:    1700000000001,
+		SourcePlatform: "whatsapp",
+		SourceID:       "target-group-msg",
+	}); err != nil {
+		t.Fatalf("UpsertMessage(): %v", err)
+	}
+
+	originalSend := sendTextMessage
+	originalIsConnected := clientIsConnected
+	defer func() {
+		sendTextMessage = originalSend
+		clientIsConnected = originalIsConnected
+	}()
+	clientIsConnected = func(_ *whatsmeow.Client) bool { return true }
+
+	var capturedMsg *waE2E.Message
+	sendTextMessage = func(_ *whatsmeow.Client, _ context.Context, _ watypes.JID, message *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+		capturedMsg = message
+		return whatsmeow.SendResponse{}, nil
+	}
+
+	if err := bridge.SendReaction("whatsapp:120363019999999999@g.us", "whatsapp:target-group-msg", "🔥", "add"); err != nil {
+		t.Fatalf("SendReaction(): %v", err)
+	}
+
+	reaction := extractReactionMessage(capturedMsg)
+	if reaction == nil {
+		t.Fatal("expected outgoing reaction message")
+	}
+	if reaction.GetKey().GetParticipant() != "15557654321@s.whatsapp.net" {
+		t.Fatalf("participant = %q, want 15557654321@s.whatsapp.net", reaction.GetKey().GetParticipant())
+	}
+	if reaction.GetKey().GetFromMe() {
+		t.Fatal("expected group reaction target to be marked as not-from-me")
 	}
 }
 
@@ -766,6 +1146,59 @@ func TestHandleMessageDeletesMatchingPlaceholderAliasWhenMediaArrives(t *testing
 		t.Fatalf("GetMessageByID(new): %v", err)
 	} else if msg == nil || msg.MediaID == "" {
 		t.Fatalf("expected repaired media message, got %#v", msg)
+	}
+}
+
+func TestHandleMessageMarksMentionsFromWhatsAppContextInfo(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := db.New(filepath.Join(dataDir, "messages.db"))
+	if err != nil {
+		t.Fatalf("db.New(): %v", err)
+	}
+	defer store.Close()
+
+	ownJID := watypes.NewJID("15551230000", watypes.DefaultUserServer)
+	bridge := &Bridge{
+		store: store,
+		client: &whatsmeow.Client{
+			Store: &wastore.Device{
+				ID:       &ownJID,
+				PushName: "Max",
+			},
+		},
+	}
+
+	bridge.handleMessage(&waevents.Message{
+		Info: watypes.MessageInfo{
+			MessageSource: watypes.MessageSource{
+				Chat:     watypes.NewJID("120363019999999999", watypes.GroupServer),
+				Sender:   watypes.NewJID("15551234567", watypes.DefaultUserServer),
+				IsFromMe: false,
+				IsGroup:  true,
+			},
+			ID:        "mention-msg",
+			PushName:  "Jenn",
+			Timestamp: time.UnixMilli(1775000000000),
+		},
+		Message: &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: strPtr("you should take a look"),
+				ContextInfo: &waE2E.ContextInfo{
+					MentionedJID: []string{ownJID.String()},
+				},
+			},
+		},
+	})
+
+	msg, err := store.GetMessageByID("whatsapp:mention-msg")
+	if err != nil {
+		t.Fatalf("GetMessageByID(): %v", err)
+	}
+	if msg == nil {
+		t.Fatal("expected stored WhatsApp message")
+	}
+	if !msg.MentionsMe {
+		t.Fatal("expected MentionsMe to be true")
 	}
 }
 

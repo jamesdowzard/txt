@@ -45,8 +45,9 @@ func main() {
 	}
 	var mediaStore sync.Map
 	base := web.APIHandlerWithOptions(store, nil, logger, nil, web.APIOptions{
-		Events:      events,
-		IsConnected: func() bool { return true },
+		Events:       events,
+		IdentityName: "Max Ghenis",
+		IsConnected:  func() bool { return true },
 		FetchLinkPreview: func(ctx context.Context, rawURL string) (*web.LinkPreview, error) {
 			switch rawURL {
 			case "https://example.com/story":
@@ -74,6 +75,17 @@ func main() {
 		WhatsAppStatus: func() any {
 			return map[string]any{"connected": true, "paired": true}
 		},
+		SignalStatus: func() any {
+			return map[string]any{"connected": true, "paired": true, "account": "+15551234567"}
+		},
+		ConnectSignal: func() error { return nil },
+		UnpairSignal:  func() error { return nil },
+		SignalQRCode: func() (any, error) {
+			return map[string]any{"png_data_url": "data:image/png;base64,ZmFrZQ=="}, nil
+		},
+		LeaveWhatsAppGroup: func(conversationID string) error {
+			return store.DeleteConversation(conversationID)
+		},
 		SendWhatsAppMedia: func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
 			messageID := fmt.Sprintf("whatsapp:e2e-media-%d", nextID.Add(1))
 			now := time.Now().UnixMilli()
@@ -98,7 +110,42 @@ func main() {
 				SourceID:       strings.TrimPrefix(messageID, "whatsapp:"),
 			}, nil
 		},
+		SendSignalMedia: func(conversationID string, data []byte, filename, mime, caption, replyToID string) (*db.Message, error) {
+			messageID := fmt.Sprintf("signal:e2e-media-%d", nextID.Add(1))
+			now := time.Now().UnixMilli()
+			mediaStore.Store(messageID, mediaBlob{
+				data: append([]byte(nil), data...),
+				mime: mime,
+			})
+			body := caption
+			if body == "" {
+				body = "[Attachment]"
+			}
+			return &db.Message{
+				MessageID:      messageID,
+				ConversationID: conversationID,
+				SenderName:     "Me",
+				SenderNumber:   "+15551234567",
+				Body:           body,
+				TimestampMS:    now,
+				Status:         "sent",
+				IsFromMe:       true,
+				MediaID:        "signalatt:e2e-media",
+				MimeType:       mime,
+				ReplyToID:      replyToID,
+				SourcePlatform: "signal",
+				SourceID:       strings.TrimPrefix(messageID, "signal:"),
+			}, nil
+		},
 		DownloadWhatsAppMedia: func(msg *db.Message) ([]byte, string, error) {
+			raw, ok := mediaStore.Load(msg.MessageID)
+			if !ok {
+				return nil, "", fmt.Errorf("media %s not found", msg.MessageID)
+			}
+			blob := raw.(mediaBlob)
+			return append([]byte(nil), blob.data...), blob.mime, nil
+		},
+		DownloadSignalMedia: func(msg *db.Message) ([]byte, string, error) {
 			raw, ok := mediaStore.Load(msg.MessageID)
 			if !ok {
 				return nil, "", fmt.Errorf("media %s not found", msg.MessageID)
@@ -123,6 +170,7 @@ func main() {
 			Body           string `json:"body"`
 			ConversationID string `json:"conversation_id"`
 			IsFromMe       bool   `json:"is_from_me"`
+			MentionsMe     bool   `json:"mentions_me"`
 			SenderName     string `json:"sender_name"`
 			SenderNumber   string `json:"sender_number"`
 			TimestampMS    int64  `json:"timestamp_ms"`
@@ -139,7 +187,7 @@ func main() {
 		if req.TimestampMS == 0 {
 			req.TimestampMS = time.Now().UnixMilli()
 		}
-		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Body, req.TimestampMS, req.IsFromMe, req.SenderName, req.SenderNumber, req.Status, nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Body, req.TimestampMS, req.IsFromMe, req.MentionsMe, req.SenderName, req.SenderNumber, req.Status, nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -229,7 +277,7 @@ func main() {
 			http.Error(w, "conversation_id and message are required", http.StatusBadRequest)
 			return
 		}
-		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Message, time.Now().UnixMilli(), true, "Me", "+15551234567", "", nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, req.ConversationID, req.Message, time.Now().UnixMilli(), true, false, "Me", "+15551234567", "", nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -269,7 +317,7 @@ func main() {
 			http.Error(w, "draft not found", http.StatusNotFound)
 			return
 		}
-		msg, err := upsertSyntheticMessage(store, draft.ConversationID, req.Body, time.Now().UnixMilli(), true, "Me", "+15551234567", "", nextID.Add(1))
+		msg, err := upsertSyntheticMessage(store, draft.ConversationID, req.Body, time.Now().UnixMilli(), true, false, "Me", "+15551234567", "", nextID.Add(1))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -387,6 +435,51 @@ func seedFixture(store *db.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := seedSyntheticConversation(store, &db.Conversation{
+		ConversationID: "signal:+14155550333",
+		Name:           "Taylor Price",
+		Participants:   `[{"name":"Taylor Price","number":"+14155550333"}]`,
+		LastMessageTS:  1738959605000,
+		UnreadCount:    0,
+		SourcePlatform: "signal",
+	}, []*db.Message{
+		{
+			MessageID:      "signal:seed-1",
+			ConversationID: "signal:+14155550333",
+			SenderName:     "Taylor Price",
+			SenderNumber:   "+14155550333",
+			Body:           "Signal is easier for me if you want to reply here.",
+			TimestampMS:    1738959605000,
+			Status:         "received",
+			SourcePlatform: "signal",
+			SourceID:       "seed-1",
+		},
+	}); err != nil {
+		return err
+	}
+	if err := seedSyntheticConversation(store, &db.Conversation{
+		ConversationID: "signal-group:4E8CCQ1ArzxJpbH53gUdo7SyJ/3d7wXnjOW/nTUdqDw=",
+		Name:           "Strategy Lab",
+		Participants:   `[{"name":"Devon Hart","number":"a1a98e48-7fa6-402e-9f62-b687098fed68"}]`,
+		LastMessageTS:  1738960200000,
+		UnreadCount:    0,
+		SourcePlatform: "signal",
+		IsGroup:        true,
+	}, []*db.Message{
+		{
+			MessageID:      "signal:seed-group-1",
+			ConversationID: "signal-group:4E8CCQ1ArzxJpbH53gUdo7SyJ/3d7wXnjOW/nTUdqDw=",
+			SenderName:     "Devon Hart",
+			SenderNumber:   "a1a98e48-7fa6-402e-9f62-b687098fed68",
+			Body:           "Not directly related, but the recent logistics outage should update everyone on how quickly coordination software is becoming a strategic lever:",
+			TimestampMS:    1738960200000,
+			Status:         "received",
+			SourcePlatform: "signal",
+			SourceID:       "seed-group-1",
+		},
+	}); err != nil {
+		return err
+	}
 	if err := store.UpsertConversation(&db.Conversation{
 		ConversationID: pagedConversation,
 		Name:           "Paged Thread",
@@ -426,7 +519,7 @@ func seedSyntheticConversation(store *db.Store, convo *db.Conversation, msgs []*
 	return nil
 }
 
-func upsertSyntheticMessage(store *db.Store, conversationID, body string, timestampMS int64, isFromMe bool, senderName, senderNumber, status string, id int64) (*db.Message, error) {
+func upsertSyntheticMessage(store *db.Store, conversationID, body string, timestampMS int64, isFromMe, mentionsMe bool, senderName, senderNumber, status string, id int64) (*db.Message, error) {
 	platform := "sms"
 	if conv, err := store.GetConversation(conversationID); err == nil && conv != nil && conv.SourcePlatform != "" {
 		platform = conv.SourcePlatform
@@ -443,6 +536,7 @@ func upsertSyntheticMessage(store *db.Store, conversationID, body string, timest
 		TimestampMS:    timestampMS,
 		Status:         status,
 		IsFromMe:       isFromMe,
+		MentionsMe:     mentionsMe,
 		SourcePlatform: platform,
 	}
 	if err := store.UpsertMessage(msg); err != nil {
