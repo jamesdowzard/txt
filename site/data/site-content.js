@@ -6,8 +6,8 @@ export const claudeMcpCommand = `claude mcp add -s user --transport sse openmess
 
 export const productSignals = [
   {
-    title: "Google Messages and WhatsApp both feel native",
-    body: "SMS, RCS, and WhatsApp already ship inside the same local workspace, with grouped routes, media, typing, and read-state support."
+    title: "Google Messages, WhatsApp, and Signal share one inbox",
+    body: "SMS, RCS, WhatsApp, and Signal all land inside the same local workspace, with grouped people, route tabs, media, and notifications."
   },
   {
     title: "The message store stays on your machine",
@@ -23,12 +23,12 @@ export const workflowSteps = [
   {
     number: "01",
     title: "Pair the routes you already use",
-    body: "Connect Google Messages, then link WhatsApp in the same app instead of living in browser mirrors and companion tabs."
+    body: "Connect Google Messages, then add WhatsApp and Signal from the same desktop surface instead of living in browser mirrors and companion tabs."
   },
   {
     number: "02",
     title: "Stay in one thread workspace",
-    body: "Search, read, reply, review media, and switch between SMS and WhatsApp lanes without leaving the desktop surface."
+    body: "Search, read, reply, review media, and switch between routes as tabs without leaving the same thread surface."
   },
   {
     number: "03",
@@ -39,12 +39,12 @@ export const workflowSteps = [
 
 export const howItWorksPoints = [
   {
-    title: "Linked-device WhatsApp session",
-    body: "OpenMessage pairs WhatsApp as a live linked device on your own machine, so new messages, typing, receipts, and media can flow into the desktop app in real time."
+    title: "Live local bridges",
+    body: "Google Messages, WhatsApp, and Signal each connect locally on your own machine, so messages, media, and route state flow into the app without a required hosted OpenMessage account."
   },
   {
     title: "One local message store",
-    body: "Google Messages and WhatsApp both normalize into the same local inbox, search index, and route-aware UI instead of living behind separate browser mirrors."
+    body: "All routes normalize into the same local inbox, search index, notifications, and people-first UI instead of living behind separate browser mirrors."
   },
   {
     title: "Same runtime for the app and MCP",
@@ -59,14 +59,14 @@ export const faqItems = [
       "OpenMessage uses a live linked-device architecture on your Mac. WhatsApp connects locally, then syncs messages, media, typing, and receipts into the same local store as your other routes."
   },
   {
+    question: "What works today across Google Messages, WhatsApp, and Signal?",
+    answer:
+      "Google Messages, WhatsApp, and Signal all run in the current app. Google Messages covers SMS and RCS, WhatsApp supports live text and media, and Signal supports live text, groups, reactions, and attachments, with history transfer available during pairing."
+  },
+  {
     question: "Does OpenMessage proxy my messages through your servers?",
     answer:
       "No required OpenMessage cloud account is involved in normal use. Messages, contacts, diagnostics, and bridge sessions stay local-first on your machine."
-  },
-  {
-    question: "What works today on WhatsApp?",
-    answer:
-      "Text, media, voice notes, typing indicators, read-state rendering, desktop notifications, grouped routes, and MCP-aware search and drafting are already in the app."
   },
   {
     question: "Where can I read the technical details?",
@@ -96,11 +96,11 @@ export const setupColumns = [
   {
     title: "macOS app",
     eyebrow: "Fastest path",
-    body: "Use the native Swift wrapper with notifications, contact photos, and an embedded local backend that already handles Google Messages and live WhatsApp.",
+    body: "Use the native Swift wrapper with notifications, contact photos, and an embedded local backend that already handles Google Messages, WhatsApp, and Signal.",
     bullets: [
       "Download the latest DMG and drag OpenMessage to Applications.",
       "Pair Google Messages from the in-app setup flow.",
-      "Turn on WhatsApp live sync from the same Connections surface."
+      "Add WhatsApp and Signal from the same Platforms surface."
     ],
     commands: [
       {
@@ -157,7 +157,7 @@ export const thesisStats = [
 export const expansionRows = [
   ["Google Messages (SMS/RCS)", "mautrix/gmessages", "Shipped", "Core local messaging route"],
   ["WhatsApp", "whatsmeow", "Shipped", "Largest global consumer network"],
-  ["Signal", "signal-cli / bridge", "Next", "Privacy-conscious users"],
+  ["Signal", "signal-cli / bridge", "Shipped", "Privacy-conscious users"],
   ["Telegram", "mautrix-telegram", "Planned", "Large cross-platform network"],
   ["Discord", "mautrix-discord", "Planned", "Community and developer use"],
   ["Slack", "mautrix-slack", "Planned", "Work messaging"],

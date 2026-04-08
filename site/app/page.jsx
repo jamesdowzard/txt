@@ -68,11 +68,11 @@ export default function HomePage() {
                 </span>
               </div>
               <h1 className="animate-fade-up mt-5 text-[clamp(2.6rem,5.5vw,4.4rem)] font-semibold leading-[0.94] tracking-[-0.06em] text-[var(--text-primary)] [animation-delay:60ms]">
-                One desktop for all your messages.
+                Google Messages, WhatsApp, and Signal in one local inbox.
               </h1>
               <p className="animate-fade-up mt-6 text-lg leading-8 text-[var(--text-secondary)] [animation-delay:120ms]">
-                Google Messages and WhatsApp in a single local app with built-in MCP for
-                Claude.
+                People stay grouped in the sidebar. Routes switch as tabs in the thread.
+                Search, media, notifications, and MCP all run on the same local runtime.
               </p>
 
               <div className="animate-fade-up mt-8 flex flex-col gap-4 sm:flex-row [animation-delay:220ms]">
@@ -90,9 +90,9 @@ export default function HomePage() {
               <div className="relative overflow-hidden rounded-[2.6rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.78)] shadow-[var(--panel-shadow)]">
                 <Image
                   src="/hero-product-dark.png"
-                  alt="OpenMessage workspace showing grouped SMS and WhatsApp threads"
-                  width={1600}
-                  height={1000}
+                  alt="OpenMessage showing a people-first inbox with grouped routes and thread tabs"
+                  width={3200}
+                  height={1640}
                   priority
                   className="h-auto w-full"
                 />
@@ -108,8 +108,8 @@ export default function HomePage() {
           <div className="grid gap-10 md:grid-cols-3">
             {[
               {
-                title: "Native multi-platform",
-                body: "Google Messages and WhatsApp in one workspace with grouped contacts, media, and desktop notifications."
+                title: "People-first multi-platform",
+                body: "Google Messages, WhatsApp, and Signal all land in one inbox, with one row per person and route tabs inside the thread."
               },
               {
                 title: "Local-first",
@@ -117,7 +117,7 @@ export default function HomePage() {
               },
               {
                 title: "Built-in MCP",
-                body: "Claude can search, draft, and send through the same local store you see in the app."
+                body: "Claude can search, draft, and send through the exact same local store you see in the app."
               }
             ].map((feature) => (
               <div key={feature.title} className="border-t border-[var(--border)] pt-6">
@@ -133,28 +133,86 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Workflow screenshot */}
-      <section id="ai" className="border-b border-[var(--border)]">
+      {/* Platforms */}
+      <section id="platforms" className="border-b border-[var(--border)]">
         <div className="mx-auto grid max-w-[1520px] gap-14 px-6 py-20 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,380px)] lg:items-center lg:px-10">
-          <div className="overflow-hidden rounded-[2.3rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.74)] shadow-[var(--panel-shadow)]">
-            <Image
-              src="/hero-command-surface.png"
-              alt="OpenMessage app alongside Claude using MCP to draft a message"
-              width={1800}
-              height={1020}
-              className="h-auto w-full"
-            />
+          <div className="relative">
+            <div className="absolute left-[8%] top-[12%] hidden h-48 w-48 rounded-full bg-[var(--accent-glow)] blur-3xl lg:block" />
+            <div className="relative overflow-hidden rounded-[2.3rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.74)] shadow-[var(--panel-shadow)]">
+              <Image
+                src="/hero-platforms-dark.png"
+                alt="OpenMessage platforms manager showing Google Messages, WhatsApp, and Signal"
+                width={3200}
+                height={2000}
+                className="h-auto w-full"
+              />
+            </div>
+            <div className="relative mx-auto -mt-12 w-[72%] overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[color:rgba(8,13,24,0.78)] shadow-[0_30px_90px_rgba(4,10,22,0.34)] lg:absolute lg:-bottom-16 lg:right-0 lg:mt-0 lg:w-[46%]">
+              <Image
+                src="/hero-signal-dark.png"
+                alt="OpenMessage Signal group conversation in the unified inbox"
+                width={3200}
+                height={2000}
+                className="h-auto w-full"
+              />
+            </div>
           </div>
 
           <div>
-            <div className="eyebrow">Workflow</div>
+            <div className="eyebrow">Platforms</div>
             <h2 className="mt-5 text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
-              Messages and commands in one surface.
+              Pair the routes you already use.
             </h2>
             <p className="mt-5 text-base leading-7 text-[var(--text-secondary)]">
-              The same local runtime powers the app, search, and MCP. Your assistant sees the same conversation state you do.
+              Google Messages, WhatsApp, and Signal all connect into the same local workspace.
+              The app keeps people grouped, surfaces each route as a clear tab, and keeps setup
+              on your machine instead of in a hosted account.
             </p>
-            <div className="mt-6">
+            <div className="mt-7 grid gap-4">
+              {[
+                {
+                  title: "Google Messages",
+                  body: "Pair your Android phone for SMS and RCS, then fetch older thread history whenever you need it."
+                },
+                {
+                  title: "WhatsApp",
+                  body: "Link it as a live companion device for text, media, voice notes, typing, and receipts."
+                },
+                {
+                  title: "Signal",
+                  body: "Connect a linked Signal device for local text, groups, reactions, and attachments. History transfer happens during pairing."
+                }
+              ].map((item) => (
+                <div key={item.title} className="border-t border-[var(--border)] pt-4">
+                  <div className="text-[1rem] font-semibold tracking-[-0.03em] text-[var(--text-primary)]">
+                    {item.title}
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                    {item.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* MCP */}
+      <section id="ai" className="border-b border-[var(--border)]">
+        <div className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,520px)_minmax(0,1fr)] lg:items-center">
+            <div>
+              <div className="eyebrow">MCP</div>
+              <h2 className="mt-5 text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
+                One runtime for the app and your assistant.
+              </h2>
+              <p className="mt-5 max-w-[34rem] text-base leading-7 text-[var(--text-secondary)]">
+                OpenMessage exposes the same local inbox to Claude over MCP. Search threads,
+                inspect contacts, draft replies, and send through the same route-aware state
+                you see in the desktop app.
+              </p>
+            </div>
+            <div className="max-w-[44rem]">
               <CommandBlock label="Connect Claude">{claudeMcpCommand}</CommandBlock>
             </div>
           </div>
@@ -168,11 +226,11 @@ export default function HomePage() {
             <div>
               <div className="eyebrow">How it works</div>
               <h2 className="mt-5 max-w-[24rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
-                WhatsApp runs as a live local route, not a static import.
+                Local routes. One message store.
               </h2>
               <p className="mt-5 max-w-[28rem] text-base leading-7 text-[var(--text-secondary)]">
-                OpenMessage links WhatsApp on your Mac, writes it into the same local inbox
-                as Google Messages, and exposes that shared state to the desktop app and MCP.
+                Each platform syncs into the same local thread model, search index, notifications,
+                and MCP surface instead of hiding behind separate browser mirrors or desktop wrappers.
               </p>
               <div className="mt-7">
                 <ActionLink href="/blog/how-openmessage-added-whatsapp">
@@ -268,7 +326,7 @@ export default function HomePage() {
         <div className="border-y border-[var(--border)] py-12">
           <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
             <h2 className="max-w-[30rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
-              Google Messages and WhatsApp today. More platforms soon.
+              Google Messages, WhatsApp, and Signal in one local desktop app.
             </h2>
             <div className="flex flex-col gap-4 sm:flex-row">
               <ActionLink href={downloadUrl} primary>

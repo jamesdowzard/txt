@@ -61,7 +61,7 @@ export default function ThesisPage() {
           <h2>What OpenMessage is</h2>
           <p>
             OpenMessage is a <strong>local-first, open-source messaging client</strong> with a built-in
-            AI control layer. Today it supports Google Messages plus live WhatsApp, ships as a native
+            AI control layer. Today it supports Google Messages, live WhatsApp, and Signal, ships as a native
             macOS app or standalone Go runtime, and exposes the local workspace through MCP.
           </p>
           <ul>
@@ -141,7 +141,7 @@ export default function ThesisPage() {
           <h2>Current traction</h2>
           <ul>
             <li>Native macOS app and local web runtime shipping from the same codebase.</li>
-            <li>Google Messages plus live WhatsApp support in the current product.</li>
+            <li>Google Messages, WhatsApp, and Signal support in the current product.</li>
             <li>Local MCP server, diagnostics, search, notifications, and route-aware threading.</li>
             <li>Open-source distribution and a live product site at openmessage.ai.</li>
           </ul>
