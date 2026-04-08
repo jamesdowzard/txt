@@ -3,6 +3,7 @@ import Image from "next/image";
 import { CommandBlock } from "../components/command-block";
 import { SiteFooter } from "../components/site-footer";
 import { SiteHeader } from "../components/site-header";
+import { WaitlistForm } from "../components/waitlist-form";
 import {
   claudeMcpCommand,
   downloadUrl,
@@ -333,20 +334,27 @@ export default function HomePage() {
       </section>
 
       {/* CTA */}
-      <section className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
+      <section id="updates" className="mx-auto max-w-[1520px] px-6 py-20 lg:px-10">
         <div className="border-y border-[var(--border)] py-12">
-          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <h2 className="max-w-[30rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
-              Google Messages, WhatsApp, and Signal in one local desktop app.
-            </h2>
-            <div className="flex flex-col gap-4 sm:flex-row">
-              <ActionLink href={downloadUrl} primary>
-                Download OpenMessage
-              </ActionLink>
-              <ActionLink href={repoUrl} external>
-                Read the code
-              </ActionLink>
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] lg:items-start">
+            <div>
+              <div className="eyebrow">Launch updates</div>
+              <h2 className="mt-5 max-w-[30rem] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--text-primary)]">
+                Google Messages, WhatsApp, and Signal in one local desktop app.
+              </h2>
+              <p className="mt-5 max-w-[34rem] text-base leading-7 text-[var(--text-secondary)]">
+                Download the current build now, or leave an email if you want the next meaningful update without watching the repo every day.
+              </p>
+              <div className="mt-7 flex flex-col gap-4 sm:flex-row">
+                <ActionLink href={downloadUrl} primary>
+                  Download OpenMessage
+                </ActionLink>
+                <ActionLink href={repoUrl} external>
+                  Read the code
+                </ActionLink>
+              </div>
             </div>
+            <WaitlistForm />
           </div>
         </div>
       </section>

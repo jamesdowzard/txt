@@ -17,6 +17,9 @@ export function SiteFooter() {
           . Free and open source under the MIT license.
         </p>
         <div className="flex flex-wrap items-center gap-4">
+          <a className="transition-colors hover:text-[var(--text-primary)]" href="/#updates">
+            Get updates
+          </a>
           <a className="transition-colors hover:text-[var(--text-primary)]" href="/blog">
             Blog
           </a>
