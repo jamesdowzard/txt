@@ -1,0 +1,25 @@
+{
+  "project": "PROJECT_NAME",
+  "version": "2.0.0",
+  "created": "2026-01-01T00:00:00Z",
+  "updated": "2026-04-12T22:01:57Z",
+  "features": [
+    {
+      "id": "fix-bundle-slug-dashes",
+      "name": "preserve dashes in bundle id slug",
+      "description": "preserve dashes in bundle id slug",
+      "status": "pending",
+      "priority": 1,
+      "branch": "feature/fix-bundle-slug-dashes",
+      "pr": null,
+      "depends_on": [],
+      "started": null,
+      "completed": null
+    }
+  ],
+  "docs_drift": {
+    "features_since_sync": 0,
+    "last_sync": null,
+    "threshold": 5
+  }
+}

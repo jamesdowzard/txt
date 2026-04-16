@@ -3,43 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenMessage</title>
+<title>Textbridge</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg-deep: #09111c;
-  --bg-surface: #0d1728;
-  --bg-elevated: #132035;
-  --bg-hover: #18263d;
-  --text-primary: #edf2fb;
-  --text-secondary: #92a1ba;
-  --text-muted: #69778c;
-  --accent: #4f6cff;
-  --accent-strong: #84a2ff;
-  --accent-dim: rgba(92, 124, 255, 0.16);
-  --accent-glow: rgba(92, 124, 255, 0.08);
-  --cream: #edf2fb;
-  --cream-soft: rgba(237, 242, 251, 0.06);
-  --sent-bg: rgba(92, 124, 255, 0.16);
-  --received-bg: #101a2a;
-  --border: rgba(148, 163, 184, 0.14);
-  --border-accent: rgba(92, 124, 255, 0.24);
-  --panel-glass: rgba(11, 19, 32, 0.92);
-  --panel-strong: rgba(10, 16, 28, 0.98);
-  --shell-1: #09111c;
-  --shell-2: #0c1626;
-  --shell-3: #111d31;
+  --bg-deep: #1a1a1a;
+  --bg-surface: #1e1e1e;
+  --bg-elevated: #2a2a2a;
+  --bg-hover: #333333;
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.55);
+  --text-muted: rgba(255, 255, 255, 0.40);
+  --accent: rgba(255, 255, 255, 0.92);
+  --accent-strong: #ffffff;
+  --accent-dim: rgba(255, 255, 255, 0.06);
+  --accent-glow: rgba(255, 255, 255, 0.04);
+  --cream: rgba(255, 255, 255, 0.92);
+  --cream-soft: rgba(255, 255, 255, 0.06);
+  --sent-bg: rgba(255, 255, 255, 0.10);
+  --received-bg: #222222;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(255, 255, 255, 0.20);
+  --panel-glass: rgba(26, 26, 26, 0.92);
+  --panel-strong: rgba(20, 20, 20, 0.98);
+  --shell-1: #1a1a1a;
+  --shell-2: #1e1e1e;
+  --shell-3: #2a2a2a;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
-  --font-serif: 'Public Sans', -apple-system, sans-serif;
-  --font-sans: 'Public Sans', -apple-system, sans-serif;
-  --font-mono: 'Public Sans', -apple-system, sans-serif;
-  --shadow-soft: 0 24px 48px rgba(0, 0, 0, 0.24);
-  --shadow-glow: 0 0 40px rgba(92, 124, 255, 0.08);
+  --font-serif: -apple-system, BlinkMacSystemFont, 'SF Pro', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro', sans-serif;
+  --font-mono: 'SF Mono', Monaco, monospace;
+  --shadow-soft: 0 24px 48px rgba(0, 0, 0, 0.32);
+  --shadow-glow: none;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -3926,6 +3923,20 @@ body::after {
     gap: 6px;
   }
 }
+
+/* Textbridge: hide WhatsApp and Signal UI — Google Messages only */
+#wa-panel,
+#signal-panel,
+[data-platform="whatsapp"],
+[data-platform="signal"],
+.platform-whatsapp,
+.platform-signal,
+.wa-section,
+.signal-section,
+.platform-tab[data-platform="whatsapp"],
+.platform-tab[data-platform="signal"] {
+  display: none !important;
+}
 </style>
 </head>
 <body>
@@ -3937,7 +3948,7 @@ body::after {
         <div class="sidebar-header-main">
           <div class="sidebar-brand">
             <div class="sidebar-brand-copy">
-              <h1>OpenMessage</h1>
+              <h1>Textbridge</h1>
             </div>
           </div>
         <div class="sidebar-actions">
@@ -4018,7 +4029,7 @@ body::after {
                 </div>
                 <span class="wa-state-pill" id="wa-status-pill">Not paired</span>
               </div>
-              <p class="wa-helper" id="wa-helper">Link a WhatsApp companion device for live WhatsApp sync, typing updates, and text replies inside OpenMessage.</p>
+              <p class="wa-helper" id="wa-helper">Link a WhatsApp companion device for live WhatsApp sync, typing updates, and text replies inside Textbridge.</p>
               <div class="wa-qr-card" id="wa-qr-card">
                 <img class="wa-qr-image" id="wa-qr-image" alt="WhatsApp QR code">
                 <div class="wa-qr-caption" id="wa-qr-caption"></div>
@@ -4040,7 +4051,7 @@ body::after {
                 </div>
                 <span class="wa-state-pill" id="signal-status-pill">Not paired</span>
               </div>
-              <p class="wa-helper" id="signal-helper">Link Signal as a companion device for live Signal sync and replies inside OpenMessage. Choose Transfer Message History on your phone during pairing if you want existing chats imported.</p>
+              <p class="wa-helper" id="signal-helper">Link Signal as a companion device for live Signal sync and replies inside Textbridge. Choose Transfer Message History on your phone during pairing if you want existing chats imported.</p>
               <div class="wa-qr-card" id="signal-qr-card">
                 <img class="wa-qr-image" id="signal-qr-image" alt="Signal QR code">
                 <div class="wa-qr-caption" id="signal-qr-caption"></div>
@@ -5003,13 +5014,13 @@ body::after {
     if (sendableSibling) {
       return {
         label: `Viewing ${platformLabel} history`,
-        note: `This is a separate ${platformLabel} route. Open the ${platformMeta(sourcePlatformOf(sendableSibling)).label} route below if you want to reply from OpenMessage.`,
+        note: `This is a separate ${platformLabel} route. Open the ${platformMeta(sourcePlatformOf(sendableSibling)).label} route below if you want to reply from Textbridge.`,
       };
     }
     return {
       label: `Viewing ${platformLabel} history`,
       note: sourcePlatformOf(convo) === 'whatsapp'
-        ? 'Reconnect WhatsApp if you want to reply or send attachments from OpenMessage on this route.'
+        ? 'Reconnect WhatsApp if you want to reply or send attachments from Textbridge on this route.'
         : 'This route is currently read-only in OpenMessage.',
     };
   }
@@ -5029,10 +5040,10 @@ body::after {
   function routeUnavailableMessage(action, convo = activeConversation) {
     const sibling = firstSendableSibling(convo);
     if (sibling) {
-      return `Open the ${platformMeta(sourcePlatformOf(sibling)).label} route to ${action} from OpenMessage.`;
+      return `Open the ${platformMeta(sourcePlatformOf(sibling)).label} route to ${action} from Textbridge.`;
     }
     const platformLabel = convo ? platformMeta(sourcePlatformOf(convo)).label : 'This';
-    return `${platformLabel} ${action} is not available from OpenMessage yet.`;
+    return `${platformLabel} ${action} is not available from Textbridge yet.`;
   }
 
   function routeUnavailablePlaceholder(convo = activeConversation) {
@@ -5565,7 +5576,7 @@ body::after {
         } catch (err) {
           console.error('Failed to open notification settings:', err);
         }
-        showThreadFeedback('Open System Settings > Notifications > OpenMessage to re-enable desktop notifications.');
+        showThreadFeedback('Open System Settings > Notifications > Textbridge to re-enable desktop notifications.');
         return;
       }
       const shouldEnable = !notificationsAllowed();
@@ -5750,7 +5761,7 @@ body::after {
   async function leaveWhatsAppGroup(convo = activeConversation) {
     if (!isLeaveableWhatsAppGroup(convo)) return;
     const groupName = String(convo.Name || 'this group').trim() || 'this group';
-    const confirmed = window.confirm(`Leave ${groupName} on WhatsApp and remove it from OpenMessage on this Mac?`);
+    const confirmed = window.confirm(`Leave ${groupName} on WhatsApp and remove it from Textbridge on this Mac?`);
     if (!confirmed) return;
 
     await postJSON('/api/whatsapp/leave-group', {
@@ -6257,7 +6268,7 @@ body::after {
 
   function updateTitleUnreadCount(convos) {
     const total = convos.reduce((sum, c) => sum + (c.UnreadCount || 0), 0);
-    document.title = total > 0 ? `(${total}) OpenMessage` : 'OpenMessage';
+    document.title = total > 0 ? `(${total}) Textbridge` : 'Textbridge';
   }
 
   function syncActiveClusterState() {}
@@ -7528,7 +7539,7 @@ body::after {
           ? 'Google Messages needs to be paired again. Open the native pairing flow to reconnect your Android phone.'
           : 'Google Messages needs to be paired again. Use the button below to copy the pair command, then run it in Terminal.')
         : (canOpenNativePairing
-          ? 'Pair your Android phone with Google Messages to bring SMS and RCS into OpenMessage.'
+          ? 'Pair your Android phone with Google Messages to bring SMS and RCS into Textbridge.'
           : 'Pair Google Messages from Terminal, then return here once your phone is linked.');
       showGoogleError(googleStatus.last_error);
       $gmActionsRow.style.display = '';
@@ -7558,7 +7569,7 @@ body::after {
 
     if (whatsAppStatus.connected) {
       const identity = whatsAppStatus.push_name || whatsAppStatus.account_jid || 'your paired account';
-      $waHelper.textContent = `Live sync is active for ${identity}. Incoming WhatsApp messages, typing updates, and text replies should now flow through OpenMessage immediately.`;
+      $waHelper.textContent = `Live sync is active for ${identity}. Incoming WhatsApp messages, typing updates, and text replies should now flow through Textbridge immediately.`;
     } else if (whatsAppStatus.connecting) {
       const identity = whatsAppStatus.push_name || whatsAppStatus.account_jid || 'your paired account';
       $waHelper.textContent = `Reconnecting live sync for ${identity}. This should usually complete automatically in a few seconds after launch.`;
@@ -7567,7 +7578,7 @@ body::after {
     } else if (whatsAppStatus.paired) {
       $waHelper.textContent = 'This WhatsApp account is already paired locally. Reconnect to resume live WhatsApp sync.';
     } else {
-      $waHelper.textContent = 'Link a WhatsApp companion device for live WhatsApp sync, typing updates, and text replies inside OpenMessage.';
+      $waHelper.textContent = 'Link a WhatsApp companion device for live WhatsApp sync, typing updates, and text replies inside Textbridge.';
     }
 
     $waConnectBtn.disabled = whatsAppStatus.connected || whatsAppStatus.pairing;
@@ -7601,16 +7612,16 @@ body::after {
       $signalHelper.textContent = `Live sync is active for ${identity}. Signal is still importing older history in the background.`;
     } else if (signalStatus.connected) {
       const identity = signalStatus.account || 'your paired Signal account';
-      $signalHelper.textContent = `Live sync is active for ${identity}. Incoming Signal messages and text replies should now flow through OpenMessage immediately.`;
+      $signalHelper.textContent = `Live sync is active for ${identity}. Incoming Signal messages and text replies should now flow through Textbridge immediately.`;
     } else if (signalStatus.connecting) {
       const identity = signalStatus.account || 'your paired Signal account';
       $signalHelper.textContent = `Reconnecting live sync for ${identity}. This should usually complete automatically in a few seconds after launch.`;
     } else if (signalStatus.pairing) {
-      $signalHelper.textContent = 'Scan the QR code below from Signal on your phone: Settings -> Linked devices -> Link New Device. If Signal offers Transfer Message History, choose it to bring existing chats into OpenMessage.';
+      $signalHelper.textContent = 'Scan the QR code below from Signal on your phone: Settings -> Linked devices -> Link New Device. If Signal offers Transfer Message History, choose it to bring existing chats into Textbridge.';
     } else if (signalStatus.paired) {
       $signalHelper.textContent = 'This Signal account is already paired locally. Reconnect to resume live Signal sync.';
     } else {
-      $signalHelper.textContent = 'Link Signal as a companion device for live Signal sync and replies inside OpenMessage. Choose Transfer Message History on your phone during pairing if you want existing chats imported.';
+      $signalHelper.textContent = 'Link Signal as a companion device for live Signal sync and replies inside Textbridge. Choose Transfer Message History on your phone during pairing if you want existing chats imported.';
     }
     if ($signalHistoryNote) {
       if (signalHistorySummary) {

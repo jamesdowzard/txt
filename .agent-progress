@@ -1,0 +1,10 @@
+# Agent Progress - rebrand-textbridge
+# Format: KEY=VALUE, one per line. Agents append, last value wins.
+# Created: 2026-04-16T02:09:37Z
+
+feature=rebrand-textbridge
+name=Rebrand macOS app from OpenMessage to Textbridge
+status=pending
+step=0
+step_name=Not started
+created=2026-04-16T02:09:37Z

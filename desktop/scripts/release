@@ -1,0 +1,109 @@
+#!/bin/bash
+# Release to stable app with semantic versioning
+# Usage: ./scripts/release [major|minor|patch] [--no-tag]
+#
+# Builds stable variant and creates symlink in /Applications.
+# App bundle lives in release/stable/ for dock persistence.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+APP_NAME="Textbridge"
+RELEASE_DIR="$REPO_DIR/release/stable"
+STABLE_APP="$RELEASE_DIR/${APP_NAME}.app"
+SYMLINK="/Applications/${APP_NAME}.app"
+SIGNING_IDENTITY="Developer ID Application: James Dowzard (G54DLMPV94)"
+ENTITLEMENTS="$REPO_DIR/src-tauri/entitlements.plist"
+TAURI_CONF="$REPO_DIR/src-tauri/tauri.conf.json"
+STABLE_ICON="$REPO_DIR/src-tauri/icons/icon-1024.png"
+
+TARGET_DIR=$(cd "$REPO_DIR/src-tauri" && cargo metadata --format-version 1 2>/dev/null | uv run --no-project python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory', '$REPO_DIR/src-tauri/target'))")
+BUILD_APP="$TARGET_DIR/release/bundle/macos/${APP_NAME}.app"
+
+BUMP_TYPE="${1:-patch}"
+NO_TAG=false
+for arg in "$@"; do
+    [[ "$arg" == "--no-tag" ]] && NO_TAG=true
+done
+
+if [[ ! "$BUMP_TYPE" =~ ^(major|minor|patch)$ ]]; then
+    echo "Usage: ./scripts/release [major|minor|patch] [--no-tag]"
+    exit 1
+fi
+
+cd "$REPO_DIR"
+
+CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+CURRENT_VERSION="${CURRENT_VERSION#v}"
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
+case "$BUMP_TYPE" in
+    major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+    minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+    patch) PATCH=$((PATCH + 1)) ;;
+esac
+NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+echo "Release: v$CURRENT_VERSION -> v$NEW_VERSION"
+
+sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
+
+echo "Building ${APP_NAME}..."
+cargo tauri build 2>&1 | grep -v "failed to remove extra attributes" || true
+
+if [[ ! -d "$BUILD_APP" ]]; then
+    echo "Error: Build failed - app not found at $BUILD_APP"
+    exit 1
+fi
+
+# Move to release/stable/ directory
+echo "Moving to release/stable/..."
+mkdir -p "$RELEASE_DIR"
+rm -rf "$STABLE_APP"
+mv "$BUILD_APP" "$STABLE_APP"
+
+# Clean up stale builds from cargo target
+rm -rf "$TARGET_DIR/release/bundle/macos"/*.app 2>/dev/null || true
+
+# Sign the app
+echo "Signing..."
+find "$STABLE_APP" -exec xattr -c {} \; 2>/dev/null || true
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$STABLE_APP/Contents/MacOS/"* 2>&1
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$STABLE_APP"
+
+# Apply custom icon (bypasses macOS squircle jail)
+if [[ -f "$STABLE_ICON" ]] && command -v fileicon &> /dev/null; then
+    echo "Applying custom icon..."
+    fileicon set "$STABLE_APP" "$STABLE_ICON"
+fi
+
+# Create symlink in /Applications (rm -rf handles both symlinks and directories)
+echo "Creating symlink in /Applications..."
+rm -rf "$SYMLINK"
+ln -sf "$STABLE_APP" "$SYMLINK"
+
+# Register with Launch Services
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$SYMLINK"
+
+echo "  Deployed to $STABLE_APP"
+echo "  Symlinked at $SYMLINK"
+
+if [[ "$NO_TAG" == "false" ]]; then
+    if [[ -n $(git status --porcelain) ]]; then
+        git add "$TAURI_CONF"
+        git commit -m "Bump version to $NEW_VERSION"
+    fi
+    git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+    git push origin main
+    git push origin "v$NEW_VERSION"
+    echo "  Tagged and pushed v$NEW_VERSION"
+fi
+
+echo "Released v$NEW_VERSION!"
+
+# Clean up old build artifacts (keep cache under 15GB)
+if command -v cargo-sweep &> /dev/null; then
+    echo ""
+    echo "Cleaning up build cache..."
+    cd "$REPO_DIR" && cargo sweep --maxsize 15GB 2>/dev/null || true
+fi

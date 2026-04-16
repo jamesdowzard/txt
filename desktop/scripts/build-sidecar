@@ -1,0 +1,33 @@
+#!/bin/bash
+# Build the Go backend as a Tauri sidecar binary.
+# Must run before `cargo tauri build` / `./scripts/dev` / `./scripts/release`.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DESKTOP_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_DIR="$(dirname "$DESKTOP_DIR")"
+BIN_DIR="$DESKTOP_DIR/src-tauri/binaries"
+
+mkdir -p "$BIN_DIR"
+
+TARGET_TRIPLE=$(rustc -vV | awk '/host:/ { print $2 }')
+OUT="$BIN_DIR/textbridge-backend-$TARGET_TRIPLE"
+
+echo "==> Building Go backend for $TARGET_TRIPLE"
+cd "$REPO_DIR"
+
+case "$TARGET_TRIPLE" in
+  aarch64-apple-darwin)
+    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "$OUT" .
+    ;;
+  x86_64-apple-darwin)
+    CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "$OUT" .
+    ;;
+  *)
+    echo "Unsupported target: $TARGET_TRIPLE" >&2
+    exit 1
+    ;;
+esac
+
+chmod +x "$OUT"
+echo "==> Wrote $OUT ($(du -h "$OUT" | cut -f1))"

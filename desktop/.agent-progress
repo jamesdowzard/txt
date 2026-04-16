@@ -1,0 +1,10 @@
+# Agent Progress - fix-bundle-slug-dashes
+# Format: KEY=VALUE, one per line. Agents append, last value wins.
+# Created: 2026-04-12T22:01:57Z
+
+feature=fix-bundle-slug-dashes
+name=preserve dashes in bundle id slug
+status=pending
+step=0
+step_name=Not started
+created=2026-04-12T22:01:57Z

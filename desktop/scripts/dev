@@ -1,0 +1,119 @@
+#!/bin/bash
+# Deploy to development app bundle
+# Usage: ./scripts/dev [--launch] [--no-build]
+#
+# Builds dev variant and creates symlink in /Applications.
+# App bundle lives in release/dev/ for dock persistence.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+APP_NAME="Textbridge"
+DEV_APP_NAME="${APP_NAME}-dev"
+RELEASE_DIR="$REPO_DIR/release/dev"
+DEV_APP="$RELEASE_DIR/${DEV_APP_NAME}.app"
+SYMLINK="/Applications/${DEV_APP_NAME}.app"
+SIGNING_IDENTITY="Developer ID Application: James Dowzard (G54DLMPV94)"
+ENTITLEMENTS="$REPO_DIR/src-tauri/entitlements.plist"
+TAURI_CONF="$REPO_DIR/src-tauri/tauri.conf.json"
+DEV_ICON="$REPO_DIR/src-tauri/icons/icon-dev-1024.png"
+
+TARGET_DIR=$(cd "$REPO_DIR/src-tauri" && cargo metadata --format-version 1 2>/dev/null | uv run --no-project python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory', '$REPO_DIR/src-tauri/target'))")
+
+LAUNCH=false
+SKIP_BUILD=false
+for arg in "$@"; do
+    case "$arg" in
+        --launch) LAUNCH=true ;;
+        --no-build) SKIP_BUILD=true ;;
+    esac
+done
+
+cd "$REPO_DIR"
+
+cleanup() {
+    if [[ -f "$TAURI_CONF.bak" ]]; then
+        mv "$TAURI_CONF.bak" "$TAURI_CONF"
+    fi
+}
+trap cleanup EXIT
+
+if [[ "$SKIP_BUILD" == "false" ]]; then
+    echo "Building ${DEV_APP_NAME}..."
+
+    if [[ -f "$TAURI_CONF.bak" ]]; then
+        mv "$TAURI_CONF.bak" "$TAURI_CONF"
+    fi
+
+    cp "$TAURI_CONF" "$TAURI_CONF.bak"
+
+    uv run --no-project python3 << PYEOF
+import json
+with open('$TAURI_CONF', 'r') as f:
+    config = json.load(f)
+
+base_id = config['identifier'].replace('-dev', '')
+config['identifier'] = base_id + '-dev'
+config['productName'] = config['productName'].replace('-dev', '') + '-dev'
+config['bundle']['icon'] = [
+    'icons/icon-dev-1024.png',
+    'icons/icon-dev.icns',
+    'icons/icon.ico'
+]
+
+with open('$TAURI_CONF', 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+PYEOF
+
+    cargo tauri build -- --no-default-features 2>&1 | grep -v "failed to remove extra attributes" || true
+    mv "$TAURI_CONF.bak" "$TAURI_CONF"
+fi
+
+BUILD_APP="$TARGET_DIR/release/bundle/macos/${DEV_APP_NAME}.app"
+
+if [[ ! -d "$BUILD_APP" ]]; then
+    echo "Error: Build failed - app not found at $BUILD_APP"
+    exit 1
+fi
+
+# Move to release/dev/ directory
+echo "Moving to release/dev/..."
+mkdir -p "$RELEASE_DIR"
+rm -rf "$DEV_APP"
+mv "$BUILD_APP" "$DEV_APP"
+
+# Clean up stale builds from cargo target
+rm -rf "$TARGET_DIR/release/bundle/macos"/*.app 2>/dev/null || true
+
+# Sign the app
+echo "Signing..."
+find "$DEV_APP" -exec xattr -c {} \; 2>/dev/null || true
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$DEV_APP/Contents/MacOS/"* 2>&1
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$DEV_APP"
+
+# Apply custom icon (bypasses macOS squircle jail)
+if [[ -f "$DEV_ICON" ]] && command -v fileicon &> /dev/null; then
+    echo "Applying custom icon..."
+    fileicon set "$DEV_APP" "$DEV_ICON"
+fi
+
+# Create symlink in /Applications (rm -rf handles both symlinks and directories)
+echo "Creating symlink in /Applications..."
+rm -rf "$SYMLINK"
+ln -sf "$DEV_APP" "$SYMLINK"
+
+# Register with Launch Services
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$SYMLINK"
+
+echo "  Deployed to $DEV_APP"
+echo "  Symlinked at $SYMLINK"
+
+if [[ "$LAUNCH" == "true" ]]; then
+    pkill -f "${DEV_APP_NAME}.app" 2>/dev/null || true
+    sleep 0.5
+    open "$SYMLINK"
+    echo "  Launched"
+fi
+
+echo "Done!"

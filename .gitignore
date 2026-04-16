@@ -1,19 +1,26 @@
 /openmessages
+/textbridge
 *.db
 session.json
 .vercel/
-macos/build/
-macos/OpenMessages/.build/
 .vercel
 .env*.local
 .build/
 node_modules/
 playwright-report/
 test-results/
-/OpenMessage.app/
-/OpenMessage.pkg
+/Textbridge.app/
+/Textbridge.pkg
 *.dSYM.zip
 fastlane/report.xml
 site/out/
 site/.claude/
 site/bun.lock
+
+# Tauri desktop app
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/release/
+# Sidecar binary is built from Go root via scripts/build-sidecar
+desktop/src-tauri/binaries/textbridge-backend-*
