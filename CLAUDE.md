@@ -51,7 +51,9 @@ The Tauri shell passes `OPENMESSAGES_DATA_DIR` → Go sidecar, pointing at the f
 
 The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync still runs. CLI `./textbridge serve` without the flag retains upstream multi-platform behaviour.
 
-**One-off cleanup** after first upgrade: any WhatsApp/Signal conversations previously imported still live in `~/Library/Application Support/ai.james-is-an.textbridge/messages.db`. Move the file to Trash and re-pair Google Messages for a clean list.
+**One-off cleanup** after first upgrade: any WhatsApp/Signal conversations previously imported still live in `~/Library/Application Support/ai.james-is-an.textbridge/messages.db`. Move the file to Trash and re-pair Google Messages for a clean list. Bridge-era session leftovers (`signal-cli/`, `whatsapp-session.db`) and the 75 MB legacy `~/.local/share/openmessage/` dir can be cleared with `desktop/scripts/cleanup-bridges` (dry-run by default; pass `--apply` to commit).
+
+**Session migration**: on first launch the Go backend auto-copies `session.json` from `~/.local/share/openmessage/` into the active dir if one is missing, so re-pairing isn't needed after wiping `messages.db`.
 
 ## Known issues
 

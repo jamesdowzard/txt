@@ -118,6 +118,9 @@ func (a *App) deepBackfill() {
 	for convID := range seen {
 		n, aborted := a.deepBackfillConversationWithToken(gm, convID, clientToken)
 		a.BackfillProgress.add(0, n, 0, 0)
+		if n > 0 {
+			a.emitMessagesChange(convID)
+		}
 		if aborted {
 			a.emitConversationsChange()
 			a.emitMessagesChange("")
@@ -198,6 +201,9 @@ func (a *App) paginateFolder(gm GMClient, folder gmproto.ListConversationsReques
 			for range batchErrors {
 				a.BackfillProgress.addError("")
 			}
+		}
+		if batchFound > 0 {
+			a.emitConversationsChange()
 		}
 
 		cursor = resp.GetCursor()

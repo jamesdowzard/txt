@@ -582,22 +582,24 @@ func TestDeepBackfillPublishesChangeNotifications(t *testing.T) {
 	a := newTestApp(t, mock)
 	var (
 		conversationChanges int
-		messagesChangedFor  string
+		messagesChanges     []string
 	)
 	a.OnConversationsChange = func() {
 		conversationChanges++
 	}
 	a.OnMessagesChange = func(conversationID string) {
-		messagesChangedFor = conversationID
+		messagesChanges = append(messagesChanges, conversationID)
 	}
 
 	a.DeepBackfill()
 
-	if conversationChanges != 1 {
-		t.Fatalf("conversation change callback count = %d, want 1", conversationChanges)
+	// Expect at least one mid-backfill conversations event (so the UI
+	// re-renders without waiting for the entire run) plus the final one.
+	if conversationChanges < 2 {
+		t.Fatalf("conversation change callback count = %d, want >= 2 (mid-backfill + final)", conversationChanges)
 	}
-	if messagesChangedFor != "" {
-		t.Fatalf("messages change callback conversation = %q, want global refresh", messagesChangedFor)
+	if len(messagesChanges) == 0 || messagesChanges[len(messagesChanges)-1] != "" {
+		t.Fatalf("messages change callback log = %v, want last entry to be a global refresh", messagesChanges)
 	}
 }
 

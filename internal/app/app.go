@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -155,6 +156,73 @@ func DefaultDataDir() string {
 	return filepath.Join(home, ".local", "share", "openmessage")
 }
 
+// LegacyDataDir returns the directory used by the pre-Tauri `./textbridge pair`
+// CLI. The Tauri shell now points the sidecar at the macOS app-data dir via
+// OPENMESSAGES_DATA_DIR, so this legacy location is only consulted to migrate
+// session.json on first launch after upgrade.
+func LegacyDataDir() string {
+	if dir := os.Getenv("OPENMESSAGES_LEGACY_DATA_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "openmessage")
+}
+
+// migrateLegacySessionFile copies session.json from the legacy data dir to the
+// active data dir when the active dir lacks one. We only touch session.json —
+// messages.db is left alone because users may deliberately wipe it.
+//
+// Returns true if a copy happened. Errors are logged via the provided logger
+// rather than returned; a missing legacy file is not an error.
+func migrateLegacySessionFile(activeDir, legacyDir string, logger zerolog.Logger) bool {
+	if activeDir == "" || legacyDir == "" || activeDir == legacyDir {
+		return false
+	}
+	dst := filepath.Join(activeDir, "session.json")
+	if _, err := os.Stat(dst); err == nil {
+		return false
+	} else if !os.IsNotExist(err) {
+		logger.Warn().Err(err).Str("path", dst).Msg("Legacy session migration: stat active session failed")
+		return false
+	}
+	src := filepath.Join(legacyDir, "session.json")
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return false
+	}
+	if !srcInfo.Mode().IsRegular() {
+		return false
+	}
+	if err := copyFile(src, dst, 0o600); err != nil {
+		logger.Warn().Err(err).Str("src", src).Str("dst", dst).Msg("Legacy session migration: copy failed")
+		return false
+	}
+	logger.Info().Str("src", src).Str("dst", dst).Msg("Migrated session.json from legacy data dir")
+	return true
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return nil
+}
+
 func DemoMode() bool {
 	value := strings.TrimSpace(os.Getenv("OPENMESSAGES_DEMO"))
 	if value == "" {
@@ -184,6 +252,10 @@ func New(logger zerolog.Logger) (*App, error) {
 			_ = os.RemoveAll(tempDataDir)
 		}
 		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+
+	if !DemoMode() {
+		migrateLegacySessionFile(dataDir, LegacyDataDir(), logger)
 	}
 
 	dbPath := filepath.Join(dataDir, "messages.db")

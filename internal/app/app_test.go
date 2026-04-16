@@ -56,6 +56,97 @@ func TestNewDemoUsesIsolatedTempDataDir(t *testing.T) {
 	}
 }
 
+func TestNewMigratesLegacySessionFile(t *testing.T) {
+	root := t.TempDir()
+	activeDir := filepath.Join(root, "active")
+	legacyDir := filepath.Join(root, "legacy")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll legacy: %v", err)
+	}
+	want := []byte(`{"token":"legacy"}`)
+	if err := os.WriteFile(filepath.Join(legacyDir, "session.json"), want, 0o600); err != nil {
+		t.Fatalf("write legacy session: %v", err)
+	}
+
+	t.Setenv("OPENMESSAGES_DATA_DIR", activeDir)
+	t.Setenv("OPENMESSAGES_LEGACY_DATA_DIR", legacyDir)
+	t.Setenv("OPENMESSAGES_DEMO", "")
+
+	a, err := New(zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer a.Close()
+
+	got, err := os.ReadFile(filepath.Join(activeDir, "session.json"))
+	if err != nil {
+		t.Fatalf("read active session: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("session.json contents = %q, want %q", got, want)
+	}
+}
+
+func TestNewKeepsExistingSessionFile(t *testing.T) {
+	root := t.TempDir()
+	activeDir := filepath.Join(root, "active")
+	legacyDir := filepath.Join(root, "legacy")
+	if err := os.MkdirAll(activeDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll active: %v", err)
+	}
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll legacy: %v", err)
+	}
+	keep := []byte(`{"token":"active"}`)
+	if err := os.WriteFile(filepath.Join(activeDir, "session.json"), keep, 0o600); err != nil {
+		t.Fatalf("write active session: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "session.json"), []byte(`{"token":"legacy"}`), 0o600); err != nil {
+		t.Fatalf("write legacy session: %v", err)
+	}
+
+	t.Setenv("OPENMESSAGES_DATA_DIR", activeDir)
+	t.Setenv("OPENMESSAGES_LEGACY_DATA_DIR", legacyDir)
+	t.Setenv("OPENMESSAGES_DEMO", "")
+
+	a, err := New(zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer a.Close()
+
+	got, err := os.ReadFile(filepath.Join(activeDir, "session.json"))
+	if err != nil {
+		t.Fatalf("read active session: %v", err)
+	}
+	if string(got) != string(keep) {
+		t.Fatalf("active session.json was overwritten; got %q, want %q", got, keep)
+	}
+}
+
+func TestNewMigrationNoOpWithoutLegacySession(t *testing.T) {
+	root := t.TempDir()
+	activeDir := filepath.Join(root, "active")
+	legacyDir := filepath.Join(root, "legacy")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll legacy: %v", err)
+	}
+
+	t.Setenv("OPENMESSAGES_DATA_DIR", activeDir)
+	t.Setenv("OPENMESSAGES_LEGACY_DATA_DIR", legacyDir)
+	t.Setenv("OPENMESSAGES_DEMO", "")
+
+	a, err := New(zerolog.Nop())
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	defer a.Close()
+
+	if _, err := os.Stat(filepath.Join(activeDir, "session.json")); !os.IsNotExist(err) {
+		t.Fatalf("did not expect a session.json to be created; err = %v", err)
+	}
+}
+
 func TestDemoModeEnvParsing(t *testing.T) {
 	t.Run("disabled when empty", func(t *testing.T) {
 		t.Setenv("OPENMESSAGES_DEMO", "")

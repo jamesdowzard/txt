@@ -1,0 +1,66 @@
+#!/bin/bash
+# Move pre-Tauri bridge leftovers (signal-cli/, whatsapp-session.db) and the
+# legacy openmessage data dir into ~/.Trash. Default mode is dry-run; pass
+# --apply to actually move anything.
+#
+# Usage: ./scripts/cleanup-bridges [--apply]
+set -e
+
+APPLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --apply) APPLY=true ;;
+        --dry-run) APPLY=false ;;
+        -h|--help)
+            echo "Usage: $0 [--apply]"
+            echo "  Dry-run by default. Pass --apply to move files to ~/.Trash."
+            exit 0
+            ;;
+        *)
+            echo "Unknown arg: $arg" >&2
+            exit 2
+            ;;
+    esac
+done
+
+ACTIVE_DIR="$HOME/Library/Application Support/ai.james-is-an.textbridge"
+LEGACY_DIR="$HOME/.local/share/openmessage"
+TRASH="$HOME/.Trash"
+
+if $APPLY; then
+    LABEL="MOVE"
+else
+    LABEL="DRY-RUN"
+fi
+
+mv_to_trash() {
+    local path="$1"
+    if [[ ! -e "$path" ]]; then
+        return
+    fi
+    local size
+    size=$(du -sh "$path" 2>/dev/null | awk '{print $1}')
+    local base
+    base=$(basename "$path")
+    local target="$TRASH/$base"
+    if [[ -e "$target" ]]; then
+        target="$TRASH/${base}-$(date +%Y%m%d-%H%M%S)"
+    fi
+    echo "[$LABEL] $size  $path  ->  $target"
+    if $APPLY; then
+        mv "$path" "$target"
+    fi
+}
+
+echo "Active dir: $ACTIVE_DIR"
+mv_to_trash "$ACTIVE_DIR/signal-cli"
+mv_to_trash "$ACTIVE_DIR/whatsapp-session.db"
+
+echo
+echo "Legacy dir: $LEGACY_DIR"
+mv_to_trash "$LEGACY_DIR"
+
+if ! $APPLY; then
+    echo
+    echo "Dry-run complete. Re-run with --apply to move the listed paths to ~/.Trash."
+fi
