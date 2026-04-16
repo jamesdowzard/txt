@@ -400,9 +400,10 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 
 	mux.HandleFunc("/api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		limit := queryInt(r, "limit", 50)
-		convos, err := store.ListConversations(limit)
+		folder := r.URL.Query().Get("folder")
+		convos, err := store.ListConversationsByFolder(folder, limit)
 		if err != nil {
-			httpError(w, "list conversations: "+err.Error(), 500)
+			httpError(w, "list conversations: "+err.Error(), 400)
 			return
 		}
 		if convos == nil {
@@ -434,6 +435,38 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			}
 			if err := store.SetConversationNotificationMode(convID, req.NotificationMode); err != nil {
 				httpError(w, "set notification mode: "+err.Error(), 400)
+				return
+			}
+			convo, err := store.GetConversation(convID)
+			if err != nil {
+				httpError(w, "get conversation: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			writeJSON(w, convo)
+			return
+		}
+		if action == "archive" || action == "unarchive" {
+			if r.Method != http.MethodPost {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			cli := getClient()
+			if cli == nil {
+				httpError(w, app.ErrNotConnected, 503)
+				return
+			}
+			archived := action == "archive"
+			if err := cli.SetConversationArchived(convID, archived); err != nil {
+				httpError(w, "libgm archive: "+err.Error(), 502)
+				return
+			}
+			target := db.FolderArchive
+			if !archived {
+				target = db.FolderInbox
+			}
+			if err := store.SetConversationFolder(convID, target); err != nil {
+				httpError(w, "set folder: "+err.Error(), 500)
 				return
 			}
 			convo, err := store.GetConversation(convID)

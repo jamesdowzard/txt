@@ -43,7 +43,7 @@ func (a *App) Backfill() error {
 	a.Logger.Info().Int("count", len(convos)).Msg("Fetched conversations")
 
 	for _, conv := range convos {
-		if err := a.storeConversation(conv); err != nil {
+		if err := a.storeConversation(conv, ""); err != nil {
 			a.Logger.Error().Err(err).Str("conv_id", conv.GetConversationID()).Msg("Failed to store conversation")
 			continue
 		}
@@ -188,7 +188,7 @@ func (a *App) paginateFolder(gm GMClient, folder gmproto.ListConversationsReques
 			seen[convID] = true
 			found++
 
-			if err := a.storeConversation(conv); err != nil {
+			if err := a.storeConversation(conv, folder.String()); err != nil {
 				a.Logger.Error().Err(err).Str("conv_id", convID).Msg("Deep backfill: store conversation failed")
 				batchErrors++
 				continue
@@ -328,7 +328,7 @@ func (a *App) discoverFromContacts(gm GMClient, seen map[string]bool, clientToke
 		}
 		seen[convID] = true
 
-		if err := a.storeConversation(conv); err != nil {
+		if err := a.storeConversation(conv, ""); err != nil {
 			a.Logger.Error().Err(err).Str("conv_id", convID).Msg("Deep backfill: store contact conversation failed")
 			continue
 		}
@@ -368,7 +368,7 @@ func (a *App) BackfillConversationByPhone(phone string) error {
 		return fmt.Errorf("no conversation returned for %s", phone)
 	}
 
-	if err := a.storeConversation(conv); err != nil {
+	if err := a.storeConversation(conv, ""); err != nil {
 		return fmt.Errorf("store conversation: %w", err)
 	}
 
@@ -417,7 +417,7 @@ func (a *App) reconcileRecentConversations(reason string) {
 			return
 		}
 
-		if err := a.storeConversation(conv); err != nil {
+		if err := a.storeConversation(conv, ""); err != nil {
 			a.Logger.Warn().Err(err).Str("conv_id", conv.GetConversationID()).Msg("Recent reconcile: store conversation failed")
 		} else {
 			changed = true
@@ -582,7 +582,12 @@ func reconcileBatchReachedLocalBoundary(msgs []*gmproto.Message, localLatestTS i
 	return oldestTS < localLatestTS
 }
 
-func (a *App) storeConversation(conv *gmproto.Conversation) error {
+// storeConversation persists a libgm conversation. `folder` is the libgm folder
+// enum name ("INBOX"/"ARCHIVE"/"SPAM_BLOCKED") when known, or "" to preserve
+// the existing db value. Only set it from paginateFolder where the folder is
+// unambiguous; later per-conversation refreshes should pass "" so app-side
+// archive/unarchive changes aren't clobbered.
+func (a *App) storeConversation(conv *gmproto.Conversation, folder string) error {
 	participantsJSON := "[]"
 	if ps := conv.GetParticipants(); len(ps) > 0 {
 		type pInfo struct {
@@ -621,6 +626,7 @@ func (a *App) storeConversation(conv *gmproto.Conversation) error {
 		Participants:   participantsJSON,
 		LastMessageTS:  conv.GetLastMessageTimestamp() / 1000,
 		UnreadCount:    unread,
+		Folder:         folder,
 	})
 }
 

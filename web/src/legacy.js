@@ -13,11 +13,20 @@
   const NOTIFICATION_MODE_ALL = 'all';
   const NOTIFICATION_MODE_MENTIONS = 'mentions';
   const NOTIFICATION_MODE_MUTED = 'muted';
+  const FOLDER_INBOX = 'inbox';
+  const FOLDER_ARCHIVE = 'archive';
+  const FOLDER_SPAM = 'spam';
+  const FOLDERS = [
+    { id: FOLDER_INBOX, label: 'Inbox' },
+    { id: FOLDER_ARCHIVE, label: 'Archive' },
+    { id: FOLDER_SPAM, label: 'Spam' },
+  ];
   let activeConvoId = null;
   let conversations = [];
   let allConversations = [];
   let activeConversation = null;
   let currentPlatformFilter = 'all';
+  let currentFolderFilter = FOLDER_INBOX;
   let conversationsRefreshTimer = null;
   let eventSource = null;
   let threadFeedbackTimer = null;
@@ -89,6 +98,7 @@
 
   // ─── DOM refs ───
   const $convoList = document.getElementById('conversation-list');
+  const $folderTabs = document.getElementById('sidebar-folder-tabs');
   const $sourceFilters = document.getElementById('sidebar-source-filters');
   const $emptyState = document.getElementById('empty-state');
   const $chatHeader = document.getElementById('chat-header');
@@ -320,6 +330,14 @@
       default:
         return '';
     }
+  }
+
+  function archiveIconHTML() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`;
+  }
+
+  function unarchiveIconHTML() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><path d="M9 15l3-3 3 3"/><line x1="12" y1="18" x2="12" y2="12"/></svg>`;
   }
 
   function notificationActionIconHTML(mode) {
@@ -1142,8 +1160,24 @@
       >Leave group</button>
     `
       : '';
+    const convoFolder = (activeConversation.Folder || FOLDER_INBOX).toLowerCase();
+    const isArchived = convoFolder === FOLDER_ARCHIVE;
+    const isSpam = convoFolder === FOLDER_SPAM;
+    // Archive action is only meaningful for Google Messages (SMS/RCS) conversations.
+    const archiveButtonHTML = activeConversation.SourcePlatform === 'sms' && !isSpam
+      ? `
+      <button
+        type="button"
+        class="chat-header-action-btn${isArchived ? ' active' : ''}"
+        id="chat-header-archive-btn"
+        title="${isArchived ? 'Move to Inbox' : 'Archive conversation'}"
+        aria-label="${isArchived ? 'Move to Inbox' : 'Archive conversation'}"
+      >${isArchived ? unarchiveIconHTML() : archiveIconHTML()}</button>
+    `
+      : '';
     $chatHeaderActions.innerHTML = `
       ${leaveButtonHTML}
+      ${archiveButtonHTML}
       <button
         type="button"
         class="chat-header-action-btn${notificationMode !== NOTIFICATION_MODE_ALL ? ' active' : ''}"
@@ -1152,6 +1186,12 @@
         aria-label="Notification settings"
       >${notificationActionIconHTML(notificationMode)}</button>
     `;
+    const $archiveBtn = document.getElementById('chat-header-archive-btn');
+    if ($archiveBtn) {
+      $archiveBtn.addEventListener('click', () => {
+        archiveConversation(activeConversation, !isArchived);
+      });
+    }
     const $leaveGroupBtn = document.getElementById('chat-header-leave-group-btn');
     if ($leaveGroupBtn) {
       $leaveGroupBtn.addEventListener('click', () => {
@@ -3881,9 +3921,59 @@
   }
 
   // ─── Load Conversations ───
+  function renderFolderTabs() {
+    if (!$folderTabs) return;
+    $folderTabs.innerHTML = FOLDERS.map(f => `
+      <button
+        type="button"
+        class="sidebar-folder-tab${f.id === currentFolderFilter ? ' active' : ''}"
+        data-folder="${f.id}"
+        role="tab"
+        aria-selected="${f.id === currentFolderFilter}"
+      >${f.label}</button>
+    `).join('');
+    $folderTabs.querySelectorAll('.sidebar-folder-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const folder = btn.dataset.folder;
+        if (folder === currentFolderFilter) return;
+        currentFolderFilter = folder;
+        activeConvoId = null;
+        activeConversation = null;
+        renderFolderTabs();
+        loadConversations();
+      });
+    });
+  }
+
+  async function archiveConversation(conv, archive) {
+    if (!conv || !conv.ConversationID) return;
+    const action = archive ? 'archive' : 'unarchive';
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`${action} failed: ${body || resp.status}`);
+        return;
+      }
+      // Drop the conversation from the current view — it moved folders.
+      if (activeConvoId === conv.ConversationID) {
+        activeConvoId = null;
+        activeConversation = null;
+      }
+      await loadConversations();
+    } catch (err) {
+      showThreadFeedback(`${action} failed: ${err.message || err}`);
+    }
+  }
+
   async function loadConversations() {
     try {
-      const convos = await fetchJSON('/api/conversations?limit=200');
+      const qs = `limit=200&folder=${encodeURIComponent(currentFolderFilter)}`;
+      const convos = await fetchJSON(`/api/conversations?${qs}`);
       renderConversations(convos);
       if (activeConversation) {
         const refreshedActive = convos.find(c => c.ConversationID === activeConversation.ConversationID);
@@ -4464,6 +4554,7 @@
     .then(() => syncNotificationButton())
     .catch(err => console.error('Failed to initialize native notifications:', err));
   renderEmptyState();
+  renderFolderTabs();
   startEventStream();
   loadConversations();
   checkStatus();

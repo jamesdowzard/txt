@@ -22,6 +22,7 @@ type Conversation struct {
 	UnreadCount    int
 	SourcePlatform string `json:"source_platform,omitempty"` // sms, gchat, imessage, whatsapp, signal, telegram
 	NotificationMode string `json:"notification_mode,omitempty"` // all, mentions, muted
+	Folder           string `json:"folder,omitempty"` // inbox, archive, spam (see FolderInbox/Archive/Spam)
 }
 
 type Message struct {
@@ -234,6 +235,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE messages ADD COLUMN source_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE conversations ADD COLUMN source_platform TEXT NOT NULL DEFAULT 'sms'",
 		"ALTER TABLE conversations ADD COLUMN notification_mode TEXT NOT NULL DEFAULT 'all'",
+		"ALTER TABLE conversations ADD COLUMN folder TEXT NOT NULL DEFAULT 'inbox'",
 	} {
 		s.db.Exec(col) // ignore "duplicate column" errors
 	}

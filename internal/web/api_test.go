@@ -191,6 +191,54 @@ func TestSetConversationNotificationMode(t *testing.T) {
 	}
 }
 
+func TestArchiveConversationRequiresClient(t *testing.T) {
+	ts := newTestServer(t) // client nil
+	if err := ts.store.UpsertConversation(&db.Conversation{
+		ConversationID: "c1",
+		Name:           "Alice",
+		LastMessageTS:  100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.server.URL+"/api/conversations/c1/archive", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("archive without client = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestListConversationsByFolder_Route(t *testing.T) {
+	ts := newTestServer(t)
+	_ = ts.store.UpsertConversation(&db.Conversation{ConversationID: "a", Name: "A", LastMessageTS: 3000})
+	_ = ts.store.UpsertConversation(&db.Conversation{ConversationID: "b", Name: "B", LastMessageTS: 2000, Folder: db.FolderArchive})
+
+	resp, err := http.Get(ts.server.URL + "/api/conversations?folder=archive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var got []db.Conversation
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ConversationID != "b" {
+		t.Fatalf("archive filter got %+v, want [b]", got)
+	}
+
+	// Unknown folder returns 400.
+	bad, _ := http.Get(ts.server.URL + "/api/conversations?folder=trash")
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown folder status = %d, want 400", bad.StatusCode)
+	}
+}
+
 func TestSetConversationNotificationModeRejectsInvalid(t *testing.T) {
 	ts := newTestServer(t)
 	if err := ts.store.UpsertConversation(&db.Conversation{

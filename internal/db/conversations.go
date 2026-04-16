@@ -7,13 +7,34 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder`
 
 const (
 	NotificationModeAll      = "all"
 	NotificationModeMentions = "mentions"
 	NotificationModeMuted    = "muted"
 )
+
+// Folder constants correspond to the libgm ListConversationsRequest_Folder enum
+// used during backfill (INBOX, ARCHIVE, SPAM_BLOCKED).
+const (
+	FolderInbox   = "inbox"
+	FolderArchive = "archive"
+	FolderSpam    = "spam"
+)
+
+func parseFolder(folder string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(folder)) {
+	case FolderInbox:
+		return FolderInbox, nil
+	case FolderArchive:
+		return FolderArchive, nil
+	case FolderSpam, "spam_blocked":
+		return FolderSpam, nil
+	default:
+		return "", fmt.Errorf("invalid folder %q", folder)
+	}
+}
 
 func explicitNotificationMode(mode string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -56,9 +77,14 @@ func (s *Store) UpsertConversation(c *Conversation) error {
 		c.SourcePlatform = "sms"
 	}
 	notificationMode, hasNotificationMode := explicitNotificationMode(c.NotificationMode)
+	folder := strings.TrimSpace(strings.ToLower(c.Folder))
+	// Normalise SPAM_BLOCKED → spam; empty stays empty so conflict preserves.
+	if folder == "spam_blocked" {
+		folder = FolderSpam
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO conversations (conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode)
-		VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'all'))
+		INSERT INTO conversations (conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder)
+		VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'all'), COALESCE(NULLIF(?, ''), 'inbox'))
 		ON CONFLICT(conversation_id) DO UPDATE SET
 			name=excluded.name,
 			is_group=excluded.is_group,
@@ -66,8 +92,14 @@ func (s *Store) UpsertConversation(c *Conversation) error {
 			last_message_ts=excluded.last_message_ts,
 			unread_count=excluded.unread_count,
 			source_platform=excluded.source_platform,
-			notification_mode=CASE WHEN ? != '' THEN ? ELSE conversations.notification_mode END
-	`, c.ConversationID, c.Name, c.IsGroup, c.Participants, c.LastMessageTS, c.UnreadCount, c.SourcePlatform, notificationMode, maybeNotificationModeArg(hasNotificationMode, notificationMode), maybeNotificationModeArg(hasNotificationMode, notificationMode))
+			notification_mode=CASE WHEN ? != '' THEN ? ELSE conversations.notification_mode END,
+			folder=CASE WHEN ? != '' THEN ? ELSE conversations.folder END
+	`,
+		c.ConversationID, c.Name, c.IsGroup, c.Participants, c.LastMessageTS, c.UnreadCount, c.SourcePlatform,
+		notificationMode, folder,
+		maybeNotificationModeArg(hasNotificationMode, notificationMode), maybeNotificationModeArg(hasNotificationMode, notificationMode),
+		folder, folder,
+	)
 	return err
 }
 
@@ -76,7 +108,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +212,41 @@ func (s *Store) SetConversationNotificationMode(id, mode string) error {
 	return err
 }
 
+// SetConversationFolder moves a conversation to `folder` (inbox/archive/spam).
+// Returns an error for unknown folder values.
+func (s *Store) SetConversationFolder(id, folder string) error {
+	normalized, err := parseFolder(folder)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE conversations SET folder = ? WHERE conversation_id = ?`, normalized, id)
+	return err
+}
+
+// ListConversationsByFolder returns conversations in the given folder, ordered
+// by last_message_ts DESC, up to limit. Pass "" for folder to return all.
+func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversation, error) {
+	if folder == "" {
+		return s.ListConversations(limit)
+	}
+	normalized, err := parseFolder(folder)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`
+		SELECT `+conversationColumns+`
+		FROM conversations
+		WHERE folder = ?
+		ORDER BY last_message_ts DESC
+		LIMIT ?
+	`, normalized, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanConversations(rows)
+}
+
 func (s *Store) ListConversations(limit int) ([]*Conversation, error) {
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
@@ -257,7 +324,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -271,7 +338,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

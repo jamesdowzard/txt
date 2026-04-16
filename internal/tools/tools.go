@@ -44,6 +44,7 @@ func Register(s *server.MCPServer, a *app.App) {
 		{"get_person_messages_range", getPersonMessagesRangeTool, getPersonMessagesRangeHandler},
 		{"render_story", renderStoryTool, renderStoryHandler},
 		{"send_group_message", sendGroupMessageTool, sendGroupMessageHandler},
+		{"archive_conversation", archiveConversationTool, archiveConversationHandler},
 	}
 
 	allow := selectedToolNames(os.Getenv("TEXTBRIDGE_MCP_TOOLS"))

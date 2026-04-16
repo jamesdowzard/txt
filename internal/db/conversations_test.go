@@ -148,6 +148,107 @@ func TestConversationNotificationModeLifecycle(t *testing.T) {
 	}
 }
 
+func TestConversationFolderLifecycle(t *testing.T) {
+	store := newTestStore(t)
+
+	// 1. New conversation defaults to inbox.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "conv-archive",
+		Name:           "Bob",
+		LastMessageTS:  1000,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, err := store.GetConversation("conv-archive")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Folder != FolderInbox {
+		t.Fatalf("default folder = %q, want %q", got.Folder, FolderInbox)
+	}
+
+	// 2. Upserting with explicit folder writes it.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "conv-archive",
+		Name:           "Bob",
+		LastMessageTS:  1000,
+		Folder:         FolderArchive,
+	}); err != nil {
+		t.Fatalf("upsert with folder: %v", err)
+	}
+	got, _ = store.GetConversation("conv-archive")
+	if got.Folder != FolderArchive {
+		t.Fatalf("folder after upsert archive = %q, want %q", got.Folder, FolderArchive)
+	}
+
+	// 3. Upserting without folder preserves existing value (matches notification_mode semantics).
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "conv-archive",
+		Name:           "Bob renamed",
+		LastMessageTS:  2000,
+	}); err != nil {
+		t.Fatalf("upsert preserve: %v", err)
+	}
+	got, _ = store.GetConversation("conv-archive")
+	if got.Folder != FolderArchive {
+		t.Fatalf("folder preserved on empty upsert = %q, want %q", got.Folder, FolderArchive)
+	}
+
+	// 4. SetConversationFolder flips value.
+	if err := store.SetConversationFolder("conv-archive", FolderInbox); err != nil {
+		t.Fatalf("SetConversationFolder: %v", err)
+	}
+	got, _ = store.GetConversation("conv-archive")
+	if got.Folder != FolderInbox {
+		t.Fatalf("folder after SetFolder(inbox) = %q, want %q", got.Folder, FolderInbox)
+	}
+
+	// 5. SPAM_BLOCKED alias normalises to spam.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "conv-spam",
+		Name:           "Spam sender",
+		LastMessageTS:  3000,
+		Folder:         "SPAM_BLOCKED",
+	}); err != nil {
+		t.Fatalf("upsert spam: %v", err)
+	}
+	got, _ = store.GetConversation("conv-spam")
+	if got.Folder != FolderSpam {
+		t.Fatalf("SPAM_BLOCKED normalised = %q, want %q", got.Folder, FolderSpam)
+	}
+
+	// 6. Invalid folder rejected.
+	if err := store.SetConversationFolder("conv-archive", "trash"); err == nil {
+		t.Fatal("expected invalid folder error")
+	}
+}
+
+func TestListConversationsByFolder(t *testing.T) {
+	store := newTestStore(t)
+
+	_ = store.UpsertConversation(&Conversation{ConversationID: "a", Name: "A", LastMessageTS: 3000})
+	_ = store.UpsertConversation(&Conversation{ConversationID: "b", Name: "B", LastMessageTS: 2000, Folder: FolderArchive})
+	_ = store.UpsertConversation(&Conversation{ConversationID: "c", Name: "C", LastMessageTS: 1000, Folder: FolderSpam})
+
+	inbox, err := store.ListConversationsByFolder(FolderInbox, 100)
+	if err != nil || len(inbox) != 1 || inbox[0].ConversationID != "a" {
+		t.Fatalf("inbox got %+v err %v", inbox, err)
+	}
+	archive, _ := store.ListConversationsByFolder(FolderArchive, 100)
+	if len(archive) != 1 || archive[0].ConversationID != "b" {
+		t.Fatalf("archive got %+v", archive)
+	}
+	spam, _ := store.ListConversationsByFolder(FolderSpam, 100)
+	if len(spam) != 1 || spam[0].ConversationID != "c" {
+		t.Fatalf("spam got %+v", spam)
+	}
+	// Empty folder = no filter, returns all 3.
+	all, _ := store.ListConversationsByFolder("", 100)
+	if len(all) != 3 {
+		t.Fatalf("all got %d, want 3", len(all))
+	}
+}
+
 func TestGetConversation_NotFound(t *testing.T) {
 	store := newTestStore(t)
 

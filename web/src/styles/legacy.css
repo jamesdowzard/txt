@@ -2493,6 +2493,42 @@ body::after {
   scrollbar-width: none;
 }
 
+.sidebar-folder-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.sidebar-folder-tab {
+  flex: 1 1 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sidebar-folder-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-folder-tab.active {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+.sidebar-folder-tab:focus-visible {
+  outline: 2px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
 .sidebar-source-filters::-webkit-scrollbar {
   display: none;
 }
