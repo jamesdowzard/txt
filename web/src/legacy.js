@@ -4554,6 +4554,13 @@
       return;
     }
 
+    // ── Cmd/Ctrl+K : Command palette (works everywhere) ──
+    if (mod && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      openCommandPalette();
+      return;
+    }
+
     // ── Cmd/Ctrl+N: New message / focus compose (works everywhere) ──
     if (mod && e.key === 'n') {
       e.preventDefault();
@@ -4792,5 +4799,147 @@
   startEventStream();
   loadConversations();
   checkStatus();
+
+  // ─── Command palette (⌘K) ───
+  const $cmdkOverlay = document.getElementById('cmdk-overlay');
+  const $cmdkInput = document.getElementById('cmdk-input');
+  const $cmdkResults = document.getElementById('cmdk-results');
+  let cmdkItems = [];
+  let cmdkSelected = 0;
+
+  function openCommandPalette() {
+    if (!$cmdkOverlay) return;
+    $cmdkInput.value = '';
+    renderCmdkResults('');
+    $cmdkOverlay.hidden = false;
+    setTimeout(() => $cmdkInput.focus(), 0);
+  }
+  function closeCommandPalette() {
+    if (!$cmdkOverlay) return;
+    $cmdkOverlay.hidden = true;
+  }
+
+  // Simple subsequence fuzzy score: returns -1 for no match, higher = better.
+  function cmdkFuzzyScore(query, target) {
+    if (!query) return 0;
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+    if (t.includes(q)) return 1000 - t.indexOf(q); // substring match wins
+    let qi = 0;
+    let score = 0;
+    let lastIdx = -1;
+    for (let i = 0; i < t.length && qi < q.length; i++) {
+      if (t[i] === q[qi]) {
+        score += (lastIdx === -1 || i === lastIdx + 1) ? 5 : 1;
+        lastIdx = i;
+        qi++;
+      }
+    }
+    return qi === q.length ? score : -1;
+  }
+
+  function cmdkActions() {
+    const convo = activeConversation;
+    const items = [
+      { type: 'action', label: 'New message', icon: '✎', run: () => { closeCommandPalette(); openNewMsg(); } },
+    ];
+    if (convo) {
+      const folder = (convo.Folder || FOLDER_INBOX).toLowerCase();
+      if (convo.SourcePlatform === 'sms' && folder !== FOLDER_SPAM) {
+        items.push({
+          type: 'action',
+          label: folder === FOLDER_ARCHIVE ? 'Unarchive conversation' : 'Archive conversation',
+          icon: '⎙',
+          run: () => { closeCommandPalette(); archiveConversation(convo, folder !== FOLDER_ARCHIVE); },
+        });
+      }
+      items.push({
+        type: 'action',
+        label: (convo.PinnedAt || 0) > 0 ? 'Unpin conversation' : 'Pin conversation',
+        icon: '📌',
+        run: () => { closeCommandPalette(); pinConversation(convo, (convo.PinnedAt || 0) === 0); },
+      });
+      items.push({
+        type: 'action',
+        label: 'Mute for 1 hour',
+        icon: '🔕',
+        run: () => { closeCommandPalette(); setConversationMute(convo, Math.floor(Date.now() / 1000) + 3600); },
+      });
+      items.push({
+        type: 'action',
+        label: 'Mute until I unmute',
+        icon: '🔕',
+        run: () => { closeCommandPalette(); setConversationMute(convo, 0); },
+      });
+    }
+    return items;
+  }
+
+  function renderCmdkResults(query) {
+    const results = [];
+    const actions = cmdkActions();
+    for (const a of actions) {
+      const score = cmdkFuzzyScore(query, a.label);
+      if (score >= 0) results.push({ ...a, score });
+    }
+    for (const c of allConversations || []) {
+      const name = c.Name || 'Unknown';
+      const score = cmdkFuzzyScore(query, name);
+      if (score >= 0) {
+        results.push({
+          type: 'conversation',
+          label: name,
+          icon: initials(name).charAt(0) || '·',
+          meta: (c.SourcePlatform || '').toUpperCase(),
+          score,
+          conversation: c,
+          run: () => { closeCommandPalette(); selectConversation(c); },
+        });
+      }
+    }
+    results.sort((a, b) => b.score - a.score);
+    cmdkItems = results.slice(0, 50);
+    cmdkSelected = 0;
+    $cmdkResults.innerHTML = cmdkItems.map((item, i) => `
+      <div class="cmdk-item${i === 0 ? ' selected' : ''}" data-idx="${i}" role="option">
+        <span class="cmdk-item-icon">${escapeHtml(item.icon || '·')}</span>
+        <span class="cmdk-item-label">${escapeHtml(item.label)}</span>
+        ${item.meta ? `<span class="cmdk-item-meta">${escapeHtml(item.meta)}</span>` : ''}
+      </div>
+    `).join('');
+    $cmdkResults.querySelectorAll('.cmdk-item').forEach((el, i) => {
+      el.addEventListener('click', () => cmdkItems[i].run());
+      el.addEventListener('mouseenter', () => setCmdkSelected(i));
+    });
+  }
+
+  function setCmdkSelected(i) {
+    if (i < 0 || i >= cmdkItems.length) return;
+    cmdkSelected = i;
+    $cmdkResults.querySelectorAll('.cmdk-item').forEach((el, idx) => {
+      el.classList.toggle('selected', idx === i);
+      if (idx === i) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  if ($cmdkInput) {
+    $cmdkInput.addEventListener('input', () => renderCmdkResults($cmdkInput.value));
+    $cmdkInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeCommandPalette(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setCmdkSelected(Math.min(cmdkSelected + 1, cmdkItems.length - 1)); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setCmdkSelected(Math.max(cmdkSelected - 1, 0)); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const item = cmdkItems[cmdkSelected];
+        if (item) item.run();
+      }
+    });
+    $cmdkOverlay.addEventListener('click', (e) => {
+      if (e.target === $cmdkOverlay) closeCommandPalette();
+    });
+  }
+
+  // Expose so the earlier keydown handler can call it
+  window.openCommandPalette = openCommandPalette;
 
 })();
