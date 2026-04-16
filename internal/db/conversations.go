@@ -8,7 +8,7 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until`
 
 const (
 	NotificationModeAll      = "all"
@@ -109,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -209,8 +209,36 @@ func (s *Store) SetConversationNotificationMode(id, mode string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE conversations SET notification_mode = ? WHERE conversation_id = ?`, normalized, id)
+	// Mode changes away from 'muted' always clear muted_until; switching to muted
+	// without a duration clears muted_until too (callers that want a deadline use
+	// SetConversationMute).
+	_, err = s.db.Exec(`UPDATE conversations SET notification_mode = ?, muted_until = 0 WHERE conversation_id = ?`, normalized, id)
 	return err
+}
+
+// SetConversationMute mutes a conversation until a specific unix second. Pass
+// untilUnix=0 to mute indefinitely ("until I unmute"). Pass a past or zero
+// timestamp together with NotificationModeAll via SetConversationNotificationMode
+// to unmute.
+func (s *Store) SetConversationMute(id string, untilUnix int64) error {
+	if untilUnix < 0 {
+		untilUnix = 0
+	}
+	_, err := s.db.Exec(`UPDATE conversations SET notification_mode = ?, muted_until = ? WHERE conversation_id = ?`, NotificationModeMuted, untilUnix, id)
+	return err
+}
+
+// IsMuted returns true when the conversation's NotificationMode is muted and the
+// mute has not auto-expired. Callers should use this instead of comparing
+// NotificationMode directly so time-bounded mutes behave correctly.
+func (c *Conversation) IsMuted() bool {
+	if c == nil || c.NotificationMode != NotificationModeMuted {
+		return false
+	}
+	if c.MutedUntil == 0 {
+		return true // indefinite
+	}
+	return time.Now().Unix() < c.MutedUntil
 }
 
 // SetConversationPinned toggles a conversation's pinned state. When pinning,
@@ -337,7 +365,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -351,7 +379,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

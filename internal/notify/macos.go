@@ -99,9 +99,10 @@ func (n *MacOSNotifier) notificationAllowed(message *db.Message) bool {
 	if err != nil || conversation == nil {
 		return true
 	}
-	switch conversation.NotificationMode {
-	case db.NotificationModeMuted:
+	if conversation.IsMuted() {
 		return false
+	}
+	switch conversation.NotificationMode {
 	case db.NotificationModeMentions:
 		return message.MentionsMe || bodyMentionsAnyName(message.Body, n.mentionNames)
 	default:

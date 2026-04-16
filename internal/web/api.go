@@ -428,12 +428,18 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			}
 			var req struct {
 				NotificationMode string `json:"notification_mode"`
+				MutedUntil       int64  `json:"muted_until,omitempty"` // unix seconds; only consulted when mode=muted
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				httpError(w, "invalid JSON: "+err.Error(), 400)
 				return
 			}
-			if err := store.SetConversationNotificationMode(convID, req.NotificationMode); err != nil {
+			if req.NotificationMode == db.NotificationModeMuted && req.MutedUntil != 0 {
+				if err := store.SetConversationMute(convID, req.MutedUntil); err != nil {
+					httpError(w, "set mute: "+err.Error(), 500)
+					return
+				}
+			} else if err := store.SetConversationNotificationMode(convID, req.NotificationMode); err != nil {
 				httpError(w, "set notification mode: "+err.Error(), 400)
 				return
 			}

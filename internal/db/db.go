@@ -22,6 +22,7 @@ type Conversation struct {
 	UnreadCount    int
 	SourcePlatform string `json:"source_platform,omitempty"` // sms, gchat, imessage, whatsapp, signal, telegram
 	NotificationMode string `json:"notification_mode,omitempty"` // all, mentions, muted
+	MutedUntil       int64  `json:"muted_until,omitempty"` // unix seconds; 0 = until-forever when NotificationMode=muted. When >0 and now() > MutedUntil, mute auto-expires.
 	Folder           string `json:"folder,omitempty"` // inbox, archive, spam (see FolderInbox/Archive/Spam)
 	PinnedAt         int64  `json:"pinned_at,omitempty"` // unix seconds; 0 = not pinned. Sorts pinned > 0 above unpinned.
 }
@@ -238,6 +239,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE conversations ADD COLUMN notification_mode TEXT NOT NULL DEFAULT 'all'",
 		"ALTER TABLE conversations ADD COLUMN folder TEXT NOT NULL DEFAULT 'inbox'",
 		"ALTER TABLE conversations ADD COLUMN pinned_at INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE conversations ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // ignore "duplicate column" errors
 	}

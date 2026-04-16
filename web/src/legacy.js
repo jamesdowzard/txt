@@ -1705,6 +1705,22 @@
     }
   }
 
+  async function setConversationMute(convo, untilUnix) {
+    if (!convo) return;
+    const updated = await postJSON(`/api/conversations/${encodeURIComponent(convo.ConversationID)}/notification-mode`, {
+      notification_mode: NOTIFICATION_MODE_MUTED,
+      muted_until: Number(untilUnix) || 0,
+    });
+    applyConversationPatch(convo.ConversationID, {
+      NotificationMode: updated.NotificationMode || NOTIFICATION_MODE_MUTED,
+      MutedUntil: updated.MutedUntil || Number(untilUnix) || 0,
+    });
+    renderConversations(allConversations);
+    if (activeConversation && activeConversation.ConversationID === convo.ConversationID) {
+      refreshConversationChrome();
+    }
+  }
+
   async function leaveWhatsAppGroup(convo = activeConversation) {
     if (!isLeaveableWhatsAppGroup(convo)) return;
     const groupName = String(convo.Name || 'this group').trim() || 'this group';
@@ -1811,6 +1827,10 @@
 
   function conversationNotificationMenuItems(convo) {
     const mode = notificationModeOf(convo);
+    const mutedUntil = Number(convo && convo.MutedUntil) || 0;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const muteActive = mode === NOTIFICATION_MODE_MUTED && (mutedUntil === 0 || mutedUntil > nowSec);
+    const muteMeta = (s) => muteActive && Math.abs((mutedUntil || 0) - (nowSec + s)) < 60 ? 'Current' : '';
     return [
       { type: 'label', label: 'Notifications' },
       {
@@ -1823,11 +1843,12 @@
         meta: mode === NOTIFICATION_MODE_MENTIONS ? 'Current' : '',
         action: `notification:${NOTIFICATION_MODE_MENTIONS}`,
       },
-      {
-        label: 'Mute notifications',
-        meta: mode === NOTIFICATION_MODE_MUTED ? 'Current' : '',
-        action: `notification:${NOTIFICATION_MODE_MUTED}`,
-      },
+      { type: 'divider' },
+      { type: 'label', label: 'Mute' },
+      { label: 'Mute for 1 hour', meta: muteMeta(3600), action: `mute:${nowSec + 3600}` },
+      { label: 'Mute for 8 hours', meta: muteMeta(8 * 3600), action: `mute:${nowSec + 8 * 3600}` },
+      { label: 'Mute for 24 hours', meta: muteMeta(24 * 3600), action: `mute:${nowSec + 24 * 3600}` },
+      { label: 'Mute until I unmute', meta: muteActive && mutedUntil === 0 ? 'Current' : '', action: 'mute:0' },
     ];
   }
 
@@ -4170,6 +4191,13 @@
             const mode = action.split(':')[1] || NOTIFICATION_MODE_ALL;
             await setConversationNotificationMode(context.conversation, mode);
             showThreadFeedback(`Notifications set to ${notificationModeLabel(mode).toLowerCase()}.`);
+            return;
+          }
+          if (action.startsWith('mute:')) {
+            const until = Number(action.split(':')[1] || '0');
+            await setConversationMute(context.conversation, until);
+            const msg = until === 0 ? 'Muted until unmuted.' : `Muted until ${new Date(until * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+            showThreadFeedback(msg);
             return;
           }
         }
