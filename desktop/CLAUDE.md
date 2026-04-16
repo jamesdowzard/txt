@@ -89,4 +89,4 @@ const result = await invoke<string>("my_command", { arg: "hello" });
 ## See Also
 
 - `../` — Go backend (libgm, MCP, web UI)
-- `../internal/web/static/index.html` — the styled web UI loaded inside the WebView
+- `../web/` — Vite + Preact source for the UI (built into `../internal/web/static/dist/` and embedded into the Go binary)

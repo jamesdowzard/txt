@@ -13,7 +13,11 @@ textbridge/
 │   ├── client/            # libgm Google Messages protocol
 │   ├── db/                # SQLite store (conversations, messages, contacts, drafts)
 │   ├── tools/             # MCP tools
-│   └── web/static/        # Embedded web UI (single HTML file loaded in WebView)
+│   └── web/static/dist/   # Embedded web UI (Vite build output — source lives in web/)
+├── web/                   # Vite + Preact + HTM source for the UI
+│   ├── index.html         # HTML shell
+│   ├── public/            # Static assets copied verbatim to dist/
+│   └── src/               # main.ts + legacy.{js,css} + styles/
 ├── desktop/               # Tauri 2 macOS app
 │   ├── src-tauri/         # Rust shell: spawns sidecar, owns window
 │   │   ├── src/lib.rs     # Sidecar lifecycle
@@ -26,15 +30,20 @@ textbridge/
 ## Build + deploy
 
 ```bash
-# Go backend (produces ./textbridge)
+# Web UI (Vite build output goes to internal/web/static/dist/)
+cd web && bun install && bun run build
+
+# Go backend (produces ./textbridge; embeds the Vite dist)
 go build -o textbridge .
 
-# Tauri app
+# Tauri app — build-sidecar runs the web build automatically
 cd desktop
 ./scripts/build-sidecar      # required before cargo tauri build
 ./scripts/release patch      # build, sign, install to /Applications/Textbridge.app
 ./scripts/dev --launch       # orange dev variant alongside stable
 ```
+
+Skip the web rebuild during tight iteration with `SKIP_WEB_BUILD=1 ./scripts/build-sidecar`.
 
 Signing: `Developer ID Application: James Dowzard (G54DLMPV94)`. Bundle ID: `ai.james-is-an.textbridge`.
 
@@ -97,13 +106,18 @@ Upstream is `MaxGhenis/openmessage` (fetched as remote `upstream`). To pull upst
 
 ```bash
 git fetch upstream
-git merge upstream/main   # expect conflicts on README, CLAUDE.md, internal/web/static/index.html
+git merge upstream/main   # expect conflicts on README, CLAUDE.md. Upstream's internal/web/static/index.html
+                          # no longer exists on this fork — the source of truth is web/ (Vite + Preact).
+                          # Port upstream UI changes by patching web/src/legacy.{js,css} or the relevant component.
 ```
 
 ## Key files
 
 - `main.go`, `cmd/pair.go`, `cmd/serve.go` — Go entrypoints
-- `internal/web/static/index.html` — web UI (frosted-dark CSS tokens at `:root`, WhatsApp/Signal hidden)
+- `web/index.html` + `web/src/main.ts` — web UI entry (Vite + Preact + HTM)
+- `web/src/styles/tokens.css` — design tokens (`:root` vars)
+- `web/src/legacy.{js,css}` — lifted-and-shifted monolith, being peeled into components per `docs/plans/2026-04-17-textbridge-roadmap.md` Task 0.4
+- `internal/web/api.go` — HTTP handler + `//go:embed static/dist` for serving the Vite build
 - `desktop/src-tauri/src/lib.rs` — Tauri setup, sidecar lifecycle
 - `desktop/src-tauri/tauri.conf.json` — bundle config, `externalBin` sidecar reference
 - `desktop/src-tauri/capabilities/default.json` — Tauri permissions (shell:allow-execute, shell:allow-spawn)

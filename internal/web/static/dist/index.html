@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Textbridge</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <script type="module" crossorigin src="/assets/index-CN9SJgB2.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BvMsVgPn.css">
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Left Rail -->
+  <div class="sidebar" id="sidebar" style="position:relative">
+      <div class="sidebar-header">
+        <div class="sidebar-header-main">
+          <div class="sidebar-brand">
+            <div class="sidebar-brand-copy">
+              <h1>Textbridge</h1>
+            </div>
+          </div>
+        <div class="sidebar-actions">
+          <button class="new-msg-btn notif-btn" id="notif-btn" type="button" title="Enable desktop notifications" aria-label="Enable desktop notifications" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5"/><path d="M9.5 17a2.5 2.5 0 0 0 5 0"/></svg>
+          </button>
+          <button class="new-msg-btn" id="new-msg-btn" title="New message">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+        </div>
+        </div>
+    </div>
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="search-input" placeholder="Search all messages" autocomplete="off">
+    </div>
+    <div class="sidebar-section-label">Recent Threads</div>
+    <div class="sidebar-source-filters" id="sidebar-source-filters"></div>
+    <div class="conversation-list" id="conversation-list"></div>
+
+    <!-- New message overlay -->
+    <div class="new-msg-overlay" id="new-msg-overlay">
+      <div class="new-msg-header">
+        <h2>New message</h2>
+        <button class="new-msg-close" id="new-msg-close">&times;</button>
+      </div>
+      <div class="new-msg-input-area">
+        <label>To</label>
+        <input type="tel" class="new-msg-phone" id="new-msg-phone" placeholder="+1 555 123 4567" autocomplete="off">
+        <div class="new-msg-helper" id="new-msg-helper">New conversations start on SMS. If this number already exists on another route, choose it explicitly below.</div>
+        <div class="new-msg-routes" id="new-msg-routes"></div>
+        <button class="new-msg-go" id="new-msg-go">Start conversation</button>
+        <div class="new-msg-error" id="new-msg-error"></div>
+      </div>
+    </div>
+
+    <div class="wa-overlay" id="wa-overlay">
+      <div class="wa-panel">
+        <div class="platforms-header">
+          <div class="platforms-header-copy">
+            <div class="platforms-kicker">Platforms</div>
+            <h2>Platforms</h2>
+          </div>
+          <button class="new-msg-close" id="wa-close">&times;</button>
+        </div>
+        <div class="wa-body">
+          <div class="platforms-intro">
+            <p>Pair each service once, then come back here whenever you need to reconnect or reset it.</p>
+          </div>
+          <div class="platforms-stack">
+            <div class="wa-section">
+              <div class="wa-section-head">
+                <div class="platform-card-main">
+                  <div class="platform-logo platform-logo--google">SMS</div>
+                  <div class="platform-card-copy">
+                    <div class="platform-card-title">Google Messages</div>
+                    <div class="platform-card-meta">SMS and RCS through your Android phone</div>
+                  </div>
+                </div>
+                <span class="wa-state-pill" id="gm-status-pill">Disconnected</span>
+              </div>
+              <p class="wa-helper" id="gm-helper">Check SMS and RCS connection state and reconnect if your phone stops syncing.</p>
+              <div class="wa-actions-row" id="gm-actions-row">
+                <button class="wa-connect-btn wa-reset-btn" id="gm-reconnect-btn" type="button">Reconnect Google Messages</button>
+                <button class="wa-tertiary-btn" id="gm-history-btn" type="button">Sync history</button>
+              </div>
+              <div class="wa-helper" id="gm-backfill-note"></div>
+              <div class="new-msg-error wa-error" id="gm-error"></div>
+            </div>
+            <div class="wa-section">
+              <div class="wa-status-line">
+                <div class="platform-card-main">
+                  <div class="platform-logo platform-logo--whatsapp">WA</div>
+                  <div class="platform-card-copy">
+                    <div class="platform-card-title">WhatsApp</div>
+                    <div class="platform-card-meta">Live linked-device sync, media, typing, and replies</div>
+                  </div>
+                </div>
+                <span class="wa-state-pill" id="wa-status-pill">Not paired</span>
+              </div>
+              <p class="wa-helper" id="wa-helper">Link a WhatsApp companion device for live WhatsApp sync, typing updates, and text replies inside Textbridge.</p>
+              <div class="wa-qr-card" id="wa-qr-card">
+                <img class="wa-qr-image" id="wa-qr-image" alt="WhatsApp QR code">
+                <div class="wa-qr-caption" id="wa-qr-caption"></div>
+              </div>
+              <div class="wa-actions-row">
+                <button class="new-msg-go wa-connect-btn" id="wa-connect-btn">Connect WhatsApp</button>
+                <button class="wa-reset-btn" id="wa-reset-btn" type="button">Reset</button>
+              </div>
+              <div class="new-msg-error wa-error" id="wa-error"></div>
+            </div>
+            <div class="wa-section">
+              <div class="wa-status-line">
+                <div class="platform-card-main">
+                  <div class="platform-logo platform-logo--signal">SIGNAL</div>
+                  <div class="platform-card-copy">
+                    <div class="platform-card-title">Signal</div>
+                    <div class="platform-card-meta">Private text sync from a linked Signal device</div>
+                  </div>
+                </div>
+                <span class="wa-state-pill" id="signal-status-pill">Not paired</span>
+              </div>
+              <p class="wa-helper" id="signal-helper">Link Signal as a companion device for live Signal sync and replies inside Textbridge. Choose Transfer Message History on your phone during pairing if you want existing chats imported.</p>
+              <div class="wa-qr-card" id="signal-qr-card">
+                <img class="wa-qr-image" id="signal-qr-image" alt="Signal QR code">
+                <div class="wa-qr-caption" id="signal-qr-caption"></div>
+              </div>
+              <div class="wa-actions-row">
+                <button class="new-msg-go wa-connect-btn" id="signal-connect-btn">Connect Signal</button>
+                <button class="wa-reset-btn" id="signal-reset-btn" type="button">Reset Signal</button>
+              </div>
+              <div class="wa-helper" id="signal-history-note"></div>
+              <div class="new-msg-error wa-error" id="signal-error"></div>
+            </div>
+          </div>
+          <div class="platforms-support">
+            <div class="platforms-support-head">
+              <strong>Need help?</strong>
+              <span>Export a local diagnostics snapshot before filing an issue.</span>
+            </div>
+            <div class="wa-actions-row wrap">
+              <button class="wa-tertiary-btn" id="copy-diagnostics-btn" type="button">Copy diagnostics</button>
+              <button class="wa-tertiary-btn" id="download-diagnostics-btn" type="button">Export JSON</button>
+              <button class="wa-tertiary-btn" id="report-issue-btn" type="button">Report issue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Pane -->
+  <div class="chat-pane" id="chat-pane">
+    <div class="connection-banner" id="connection-banner">
+      <span class="connection-banner-copy" id="connection-banner-copy">Not connected to Google Messages</span>
+      <button class="connection-banner-action" id="connection-banner-action" type="button">Reconnect</button>
+    </div>
+    <div class="thread-feedback" id="thread-feedback" role="status" aria-live="polite"></div>
+
+    <!-- Empty state (shown when no conversation selected) -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <h2 id="empty-state-title">No conversations yet</h2>
+      <p id="empty-state-copy"></p>
+      <div class="empty-state-notes" id="empty-state-notes"></div>
+      <button class="empty-state-cta" id="empty-state-cta">New message</button>
+    </div>
+
+    <!-- Chat view (hidden until conversation selected) -->
+    <div class="chat-header" id="chat-header" style="display:none">
+      <div class="chat-header-avatar" id="chat-header-avatar"></div>
+      <div>
+        <div class="chat-header-name-row">
+          <div class="chat-header-name" id="chat-header-name"></div>
+          <div class="chat-header-actions" id="chat-header-actions"></div>
+        </div>
+        <div class="chat-header-source" id="chat-header-source"></div>
+        <div class="chat-header-status" id="chat-header-status"></div>
+      </div>
+    </div>
+    <div class="messages-area" id="messages-area" style="display:none"></div>
+    <div class="reply-indicator" id="reply-indicator">
+      <div class="reply-preview">Replying to <span id="reply-to-name"></span>: <span id="reply-to-text"></span></div>
+      <button class="reply-close" id="reply-close">&times;</button>
+    </div>
+    <div class="attach-preview" id="attach-preview">
+      <img id="attach-thumb" alt="Preview">
+      <span class="attach-name" id="attach-name"></span>
+      <button class="attach-remove" id="attach-remove">&times;</button>
+    </div>
+    <div class="compose-bar" id="compose-bar" style="display:none">
+      <div class="compose-row">
+        <input type="file" id="file-input" accept="image/*,video/*,audio/*" style="display:none">
+        <button class="attach-btn" id="attach-btn" title="Attach media">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </button>
+        <textarea class="compose-input" id="compose-input" placeholder="Write a message..." rows="1"></textarea>
+        <button class="send-btn" id="send-btn" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="context-menu" id="context-menu" hidden></div>
+
+</body>
+</html>

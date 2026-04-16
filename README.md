@@ -85,7 +85,7 @@ Stable and dev can coexist — different bundle IDs, separate data dirs.
 
 ## Development
 
-- **Web UI**: `internal/web/static/index.html` (rebuild sidecar after edits)
+- **Web UI**: `web/` (Vite + Preact + HTM). `bun run build` writes to `internal/web/static/dist/`, which is embedded into the Go binary via `go:embed`. Legacy single-file UI is being peeled into components — see `docs/plans/2026-04-17-textbridge-roadmap.md`.
 - **Rust shell** (window + sidecar lifecycle): `desktop/src-tauri/src/lib.rs`
 - **Go backend** (libgm, HTTP, MCP): `main.go`, `cmd/`, `internal/`
 - **Feature branches only** — use `/f:new` and `/f:ship` for all changes

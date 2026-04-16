@@ -1526,8 +1526,9 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	// Serve embedded static files at root
-	staticContent, err := fs.Sub(staticFS, "static")
+	// Serve embedded Vite build output at root. Source lives in web/; build
+	// copies index.html, favicon.svg, and hashed assets/ into static/dist/.
+	staticContent, err := fs.Sub(staticFS, "static/dist")
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to create static sub-filesystem")
 	}
