@@ -16,6 +16,10 @@ SIGNING_IDENTITY="Developer ID Application: James Dowzard (G54DLMPV94)"
 ENTITLEMENTS="$REPO_DIR/src-tauri/entitlements.plist"
 TAURI_CONF="$REPO_DIR/src-tauri/tauri.conf.json"
 STABLE_ICON="$REPO_DIR/src-tauri/icons/icon-1024.png"
+UPDATER_KEY_SCRIPT="$SCRIPT_DIR/updater-key"
+# GitHub Release tag/URL pattern that the updater fetches latest.json + tarball from.
+# Adjust if you switch hosting (e.g. Cloudflare R2). Must match plugins.updater.endpoints.
+UPDATER_RELEASE_BASE="${UPDATER_RELEASE_BASE:-https://github.com/jamesdowzard/textbridge/releases/download}"
 
 TARGET_DIR=$(cd "$REPO_DIR/src-tauri" && cargo metadata --format-version 1 2>/dev/null | uv run --no-project python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory', '$REPO_DIR/src-tauri/target'))")
 BUILD_APP="$TARGET_DIR/universal-apple-darwin/release/bundle/macos/${APP_NAME}.app"
@@ -54,6 +58,29 @@ esac
 NEW_VERSION="$MAJOR.$MINOR.$PATCH"
 
 echo "Release: v$CURRENT_VERSION -> v$NEW_VERSION"
+
+# Verify updater signing key is in keychain BEFORE bumping version + building.
+# Skip with SKIP_UPDATER=1 if you're cutting a release without the auto-update
+# pipeline (the bundle still builds and signs; it just won't ship a latest.json).
+if [[ "${SKIP_UPDATER:-0}" == "1" ]]; then
+    echo "Updater: skipped (SKIP_UPDATER=1) — no latest.json will be generated"
+    UPDATER_ENABLED=false
+else
+    if ! "$UPDATER_KEY_SCRIPT" check >/dev/null 2>&1; then
+        echo ""
+        "$UPDATER_KEY_SCRIPT" check || true
+        echo ""
+        echo "Re-run with SKIP_UPDATER=1 to bypass and ship without auto-update." >&2
+        exit 1
+    fi
+    UPDATER_ENABLED=true
+    # Export the private key from keychain for the duration of the build.
+    # tauri-cli reads TAURI_SIGNING_PRIVATE_KEY to sign the .app.tar.gz that
+    # createUpdaterArtifacts emits. Empty password — keychain ACL is the gate.
+    TAURI_SIGNING_PRIVATE_KEY="$("$UPDATER_KEY_SCRIPT" export)"
+    export TAURI_SIGNING_PRIVATE_KEY
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+fi
 
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
 
@@ -135,6 +162,69 @@ if echo "$GK_STATUS" | grep -q "accepted"; then
     echo "  Gatekeeper: $(echo "$GK_STATUS" | head -2 | tr '\n' ' ')"
 else
     echo "  Gatekeeper: $(echo "$GK_STATUS" | head -2 | tr '\n' ' ')"
+fi
+
+# Generate the updater artifacts (Textbridge.app.tar.gz + .sig + latest.json)
+# AFTER notarization + stapling. We re-tar the final stapled .app and re-sign
+# the tarball with the updater key so installed clients verify against the
+# canonical, fully-notarized bundle.
+#
+# Tauri's createUpdaterArtifacts emits a tarball during cargo tauri build, but
+# that captures the .app before our manual codesign + notarization, so the
+# in-bundle hash differs and we'd ship an older snapshot. Re-doing it here
+# guarantees the tarball matches what the user actually downloaded + ran.
+if [[ "$UPDATER_ENABLED" == "true" ]]; then
+    echo "Generating updater artifacts..."
+    UPDATER_TARBALL="$RELEASE_DIR/${APP_NAME}.app.tar.gz"
+    UPDATER_SIG="${UPDATER_TARBALL}.sig"
+    UPDATER_MANIFEST="$RELEASE_DIR/latest.json"
+
+    # Tar the stapled .app from the release dir so the archive root is the .app
+    # itself (Tauri's installer expects this layout).
+    rm -f "$UPDATER_TARBALL" "$UPDATER_SIG" "$UPDATER_MANIFEST"
+    (cd "$RELEASE_DIR" && tar czf "$UPDATER_TARBALL" "${APP_NAME}.app")
+
+    # Sign the tarball. tauri-cli writes <FILE>.sig next to the input.
+    bunx tauri signer sign \
+        --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+        --password "" \
+        "$UPDATER_TARBALL" >/dev/null
+
+    if [[ ! -f "$UPDATER_SIG" ]]; then
+        echo "  Error: tauri signer sign did not produce $UPDATER_SIG" >&2
+        exit 1
+    fi
+
+    SIG_CONTENTS="$(cat "$UPDATER_SIG")"
+    PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    DOWNLOAD_URL="${UPDATER_RELEASE_BASE}/v${NEW_VERSION}/${APP_NAME}.app.tar.gz"
+
+    # latest.json — universal binary, so darwin-aarch64 + darwin-x86_64 both
+    # point at the same artifact + signature.
+    /usr/bin/python3 - "$NEW_VERSION" "$PUB_DATE" "$DOWNLOAD_URL" "$SIG_CONTENTS" "$UPDATER_MANIFEST" <<'PY'
+import json, sys
+version, pub_date, url, sig, out = sys.argv[1:6]
+manifest = {
+    "version": version,
+    "notes": f"Textbridge {version}",
+    "pub_date": pub_date,
+    "platforms": {
+        "darwin-aarch64": {"signature": sig, "url": url},
+        "darwin-x86_64":  {"signature": sig, "url": url},
+    },
+}
+with open(out, "w") as f:
+    json.dump(manifest, f, indent=2)
+PY
+
+    echo "  Wrote $UPDATER_TARBALL"
+    echo "  Wrote $UPDATER_SIG"
+    echo "  Wrote $UPDATER_MANIFEST"
+    echo ""
+    echo "Upload these three files to the v$NEW_VERSION GitHub Release:"
+    echo "  - $UPDATER_TARBALL"
+    echo "  - $UPDATER_SIG"
+    echo "  - $UPDATER_MANIFEST   (must be uploaded as 'latest.json')"
 fi
 
 if [[ "$NO_TAG" == "false" ]]; then

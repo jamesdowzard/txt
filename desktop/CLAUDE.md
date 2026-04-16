@@ -54,6 +54,48 @@ The Rust side sets `OPENMESSAGES_DATA_DIR` env var to the first path before laun
 - Debug: ad-hoc
 - Release: `Developer ID Application: James Dowzard (G54DLMPV94)` (via `./scripts/release`)
 
+## Auto-update
+
+`tauri-plugin-updater` is registered in `src-tauri/src/lib.rs` and runs once on
+launch in release builds (skipped in `cargo tauri dev`). Endpoint + pubkey live
+in `tauri.conf.json` under `plugins.updater`.
+
+**One-time key setup** (run once, not per release):
+
+```bash
+cargo tauri signer generate -w ~/.tauri/textbridge-updater.key
+security add-generic-password -a textbridge-updater -s textbridge-updater \
+  -w "$(cat ~/.tauri/textbridge-updater.key)"
+security add-generic-password -a textbridge-updater-pub -s textbridge-updater-pub \
+  -w "$(cat ~/.tauri/textbridge-updater.key.pub)"
+# Paste the pubkey into tauri.conf.json (replacing the REPLACE_WITH_... placeholder):
+./scripts/updater-key pubkey
+```
+
+Then move `~/.tauri/textbridge-updater.key{,.pub}` to Vaultwarden and delete from
+disk — keychain is the source of truth. `./scripts/updater-key check` verifies
+both keys are present.
+
+**Per-release** (handled by `./scripts/release`):
+
+1. `./scripts/updater-key check` — gates the build; errors with setup
+   instructions if the key isn't in keychain.
+2. `TAURI_SIGNING_PRIVATE_KEY=$(./scripts/updater-key export)` exported for the build.
+3. After codesign + notarize + staple, the script re-tars the final stapled
+   `.app` into `Textbridge.app.tar.gz`, signs it (`tauri signer sign`), and
+   writes `latest.json` referencing both `darwin-aarch64` + `darwin-x86_64`
+   (the universal build is one artifact for both arches).
+4. Upload the three files (`Textbridge.app.tar.gz`, `Textbridge.app.tar.gz.sig`,
+   `latest.json`) to the GitHub Release the script tagged as `v$NEW_VERSION`.
+
+The updater endpoint in `tauri.conf.json` points at
+`https://github.com/jamesdowzard/textbridge/releases/latest/download/latest.json`,
+so installed apps automatically pick up whatever release is marked "latest" on
+GitHub.
+
+Skip the updater pipeline (no `latest.json`, build still signs the bundle) with
+`SKIP_UPDATER=1 ./scripts/release patch`.
+
 ## Notarization
 
 `./scripts/release` notarizes + staples after signing when the keychain profile `Textbridge` is present. One-time setup:

@@ -3,6 +3,11 @@ use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+#[cfg(not(debug_assertions))]
+use tauri::AppHandle;
+#[cfg(not(debug_assertions))]
+use tauri_plugin_updater::UpdaterExt;
+
 #[cfg(feature = "single-instance")]
 use tauri_plugin_single_instance;
 
@@ -12,7 +17,8 @@ struct BackendChild(Mutex<Option<CommandChild>>);
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "single-instance")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}));
@@ -55,6 +61,20 @@ pub fn run() {
                 }
             });
 
+            // Auto-update check at launch. Skip in dev (debug) builds —
+            // updater pubkey is a placeholder until the user runs
+            // `tauri signer generate` once. The release build embeds the
+            // real key via tauri.conf.json + TAURI_SIGNING_PRIVATE_KEY.
+            #[cfg(not(debug_assertions))]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = check_for_update(handle).await {
+                        eprintln!("[updater] {err}");
+                    }
+                });
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -69,3 +89,42 @@ pub fn run() {
             }
         });
 }
+
+/// Check the configured updater endpoint for a newer release. If one is
+/// available, download it (verifying the signature against the embedded
+/// pubkey), install it, and relaunch the app.
+///
+/// The check runs once on launch. Failures are logged and swallowed —
+/// users without internet, or a 404 from a release without `latest.json`,
+/// must not block the app from starting.
+#[cfg(not(debug_assertions))]
+async fn check_for_update(app: AppHandle) -> tauri_plugin_updater::Result<()> {
+    let updater = app.updater()?;
+    let Some(update) = updater.check().await? else {
+        return Ok(());
+    };
+
+    eprintln!(
+        "[updater] update available: {} (current {})",
+        update.version, update.current_version
+    );
+
+    let mut downloaded: usize = 0;
+    update
+        .download_and_install(
+            |chunk_length, content_length| {
+                downloaded += chunk_length;
+                if let Some(total) = content_length {
+                    eprintln!("[updater] downloaded {downloaded}/{total} bytes");
+                }
+            },
+            || {
+                eprintln!("[updater] download finished, installing");
+            },
+        )
+        .await?;
+
+    eprintln!("[updater] installed update; relaunching");
+    app.restart();
+}
+
