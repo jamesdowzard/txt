@@ -1,5 +1,15 @@
 #!/bin/bash
-# Build the Go backend as a Tauri sidecar binary.
+# Build the Go backend as Tauri sidecar binaries.
+#
+# Default: build both Apple Silicon and Intel slices and lipo them into
+# `textbridge-backend-universal-apple-darwin`, which is what Tauri 2's
+# `externalBin` picks up when `cargo tauri build --target universal-apple-darwin`
+# runs. The per-arch files are also left in place for standalone debugging.
+#
+# Set BUILD_SIDECAR_HOST_ONLY=1 to build only the host architecture (faster
+# dev-loop). That skips the universal lipo step, so the resulting bundle will
+# only run on the host arch.
+#
 # Must run before `cargo tauri build` / `./scripts/dev` / `./scripts/release`.
 set -euo pipefail
 
@@ -9,25 +19,34 @@ REPO_DIR="$(dirname "$DESKTOP_DIR")"
 BIN_DIR="$DESKTOP_DIR/src-tauri/binaries"
 
 mkdir -p "$BIN_DIR"
-
-TARGET_TRIPLE=$(rustc -vV | awk '/host:/ { print $2 }')
-OUT="$BIN_DIR/textbridge-backend-$TARGET_TRIPLE"
-
-echo "==> Building Go backend for $TARGET_TRIPLE"
 cd "$REPO_DIR"
 
-case "$TARGET_TRIPLE" in
-  aarch64-apple-darwin)
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "$OUT" .
-    ;;
-  x86_64-apple-darwin)
-    CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "$OUT" .
-    ;;
-  *)
-    echo "Unsupported target: $TARGET_TRIPLE" >&2
-    exit 1
-    ;;
-esac
+build_one() {
+    local triple="$1" goarch="$2"
+    local out="$BIN_DIR/textbridge-backend-$triple"
+    echo "==> Building Go backend for $triple"
+    CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -ldflags="-s -w" -o "$out" .
+    chmod +x "$out"
+    echo "    wrote $out ($(du -h "$out" | cut -f1))"
+}
 
-chmod +x "$OUT"
-echo "==> Wrote $OUT ($(du -h "$OUT" | cut -f1))"
+HOST_TRIPLE=$(rustc -vV | awk '/host:/ { print $2 }')
+
+if [[ "${BUILD_SIDECAR_HOST_ONLY:-0}" == "1" ]]; then
+    case "$HOST_TRIPLE" in
+        aarch64-apple-darwin) build_one aarch64-apple-darwin arm64 ;;
+        x86_64-apple-darwin)  build_one x86_64-apple-darwin  amd64 ;;
+        *) echo "Unsupported host: $HOST_TRIPLE" >&2; exit 1 ;;
+    esac
+else
+    build_one aarch64-apple-darwin arm64
+    build_one x86_64-apple-darwin  amd64
+    UNIVERSAL="$BIN_DIR/textbridge-backend-universal-apple-darwin"
+    echo "==> Lipo'ing universal binary"
+    lipo -create \
+        "$BIN_DIR/textbridge-backend-aarch64-apple-darwin" \
+        "$BIN_DIR/textbridge-backend-x86_64-apple-darwin" \
+        -output "$UNIVERSAL"
+    chmod +x "$UNIVERSAL"
+    echo "    wrote $UNIVERSAL ($(du -h "$UNIVERSAL" | cut -f1))"
+fi

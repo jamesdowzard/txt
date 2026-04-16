@@ -5,7 +5,7 @@ Native macOS wrapper around the Go backend. Tauri 2 + TypeScript + Rust. The Rus
 ## Quick Start
 
 ```bash
-# 1. Build the Go sidecar (once, or when Go code changes)
+# 1. Build the Go sidecar (both arm64 + x86_64; set BUILD_SIDECAR_HOST_ONLY=1 for host-only)
 ./scripts/build-sidecar
 
 # 2. Dev loop (hot reload frontend, backend sidecar running)
@@ -53,6 +53,19 @@ The Rust side sets `OPENMESSAGES_DATA_DIR` env var to the first path before laun
 
 - Debug: ad-hoc
 - Release: `Developer ID Application: James Dowzard (G54DLMPV94)` (via `./scripts/release`)
+
+## Notarization
+
+`./scripts/release` notarizes + staples after signing when the keychain profile `Textbridge` is present. One-time setup:
+
+```bash
+xcrun notarytool store-credentials Textbridge \
+  --apple-id <your apple id> \
+  --team-id G54DLMPV94 \
+  --password <app-specific password from appleid.apple.com>
+```
+
+Override profile name with `NOTARY_KEYCHAIN_PROFILE=other`. Skip entirely with `SKIP_NOTARIZE=1` for fast dev iterations. Verify after release with `spctl -a -vv /Applications/Textbridge.app` — expect `accepted, source=Notarized Developer ID`.
 
 ## Adding Rust commands
 

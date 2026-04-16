@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,27 +13,78 @@ import (
 	"github.com/maxghenis/openmessage/internal/db"
 )
 
+// Register exposes MCP tools on s. Default = the minimal four
+// (send_message, search_messages, list_conversations, conversation_stats),
+// to keep MCP clients' tool palettes focused. Override with
+// TEXTBRIDGE_MCP_TOOLS=all (every tool) or a comma-separated list of names.
 func Register(s *server.MCPServer, a *app.App) {
-	s.AddTool(getMessagesTool(), getMessagesHandler(a))
-	s.AddTool(getConversationTool(), getConversationHandler(a))
-	s.AddTool(searchMessagesTool(), searchMessagesHandler(a))
-	s.AddTool(sendMessageTool(), sendMessageHandler(a))
-	s.AddTool(sendToConversationTool(), sendToConversationHandler(a))
-	s.AddTool(listConversationsTool(), listConversationsHandler(a))
-	s.AddTool(listContactsTool(), listContactsHandler(a))
-	s.AddTool(getStatusTool(), getStatusHandler(a))
-	s.AddTool(draftMessageTool(), draftMessageHandler(a))
-	s.AddTool(downloadMediaTool(), downloadMediaHandler(a))
-	s.AddTool(importMessagesTool(), importMessagesHandler(a))
-	s.AddTool(getPersonMessagesTool(), getPersonMessagesHandler(a))
-	s.AddTool(conversationStatsTool(), conversationStatsHandler(a))
-	s.AddTool(generateStoryTool(), generateStoryHandler(a))
-	s.AddTool(personStatsTool(), personStatsHandler(a))
-	s.AddTool(generatePersonStoryTool(), generatePersonStoryHandler(a))
-	s.AddTool(generateVizTool(), generateVizHandler(a))
-	s.AddTool(getPersonMessagesRangeTool(), getPersonMessagesRangeHandler(a))
-	s.AddTool(renderStoryTool(), renderStoryHandler(a))
-	s.AddTool(sendGroupMessageTool(), sendGroupMessageHandler(a))
+	type entry struct {
+		name    string
+		tool    func() mcp.Tool
+		handler func(*app.App) server.ToolHandlerFunc
+	}
+	all := []entry{
+		{"get_messages", getMessagesTool, getMessagesHandler},
+		{"get_conversation", getConversationTool, getConversationHandler},
+		{"search_messages", searchMessagesTool, searchMessagesHandler},
+		{"send_message", sendMessageTool, sendMessageHandler},
+		{"send_to_conversation", sendToConversationTool, sendToConversationHandler},
+		{"list_conversations", listConversationsTool, listConversationsHandler},
+		{"list_contacts", listContactsTool, listContactsHandler},
+		{"get_status", getStatusTool, getStatusHandler},
+		{"draft_message", draftMessageTool, draftMessageHandler},
+		{"download_media", downloadMediaTool, downloadMediaHandler},
+		{"import_messages", importMessagesTool, importMessagesHandler},
+		{"get_person_messages", getPersonMessagesTool, getPersonMessagesHandler},
+		{"conversation_stats", conversationStatsTool, conversationStatsHandler},
+		{"generate_story", generateStoryTool, generateStoryHandler},
+		{"person_stats", personStatsTool, personStatsHandler},
+		{"generate_person_story", generatePersonStoryTool, generatePersonStoryHandler},
+		{"generate_viz", generateVizTool, generateVizHandler},
+		{"get_person_messages_range", getPersonMessagesRangeTool, getPersonMessagesRangeHandler},
+		{"render_story", renderStoryTool, renderStoryHandler},
+		{"send_group_message", sendGroupMessageTool, sendGroupMessageHandler},
+	}
+
+	allow := selectedToolNames(os.Getenv("TEXTBRIDGE_MCP_TOOLS"))
+	_, registerAll := allow["*"]
+	for _, e := range all {
+		if !registerAll {
+			if _, ok := allow[e.name]; !ok {
+				continue
+			}
+		}
+		s.AddTool(e.tool(), e.handler(a))
+	}
+}
+
+// selectedToolNames returns the set of tool names to register based on the
+// TEXTBRIDGE_MCP_TOOLS environment variable. The "*" sentinel means register
+// every available tool.
+func selectedToolNames(env string) map[string]struct{} {
+	minimal := map[string]struct{}{
+		"send_message":       {},
+		"search_messages":    {},
+		"list_conversations": {},
+		"conversation_stats": {},
+	}
+	val := strings.TrimSpace(strings.ToLower(env))
+	switch val {
+	case "", "minimal":
+		return minimal
+	case "all":
+		return map[string]struct{}{"*": {}}
+	}
+	out := map[string]struct{}{}
+	for _, name := range strings.Split(val, ",") {
+		if n := strings.TrimSpace(name); n != "" {
+			out[n] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return minimal
+	}
+	return out
 }
 
 func strArg(args map[string]any, key string) string {

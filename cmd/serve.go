@@ -123,23 +123,29 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		logger.Info().Msg("Demo mode — skipping phone connection")
 	}
 
-	if !isDemo {
+	googleOnly := os.Getenv("TEXTBRIDGE_GOOGLE_ONLY") == "1"
+
+	if !isDemo && !googleOnly {
 		if err := a.LoadAndConnectWhatsApp(); err != nil {
 			logger.Warn().Err(err).Msg("WhatsApp live bridge unavailable")
 		}
-	} else {
+	} else if isDemo {
 		logger.Info().Msg("Demo mode — skipping WhatsApp live bridge")
+	} else {
+		logger.Info().Msg("TEXTBRIDGE_GOOGLE_ONLY — skipping WhatsApp live bridge")
 	}
 
-	if !isDemo {
+	if !isDemo && !googleOnly {
 		if err := a.LoadAndConnectSignal(); err != nil {
 			logger.Warn().Err(err).Msg("Signal live bridge unavailable")
 		}
-	} else {
+	} else if isDemo {
 		logger.Info().Msg("Demo mode — skipping Signal live bridge")
+	} else {
+		logger.Info().Msg("TEXTBRIDGE_GOOGLE_ONLY — skipping Signal live bridge")
 	}
 
-	if !isDemo {
+	if !isDemo && !googleOnly {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
@@ -155,7 +161,7 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		}()
 	}
 
-	if !isDemo {
+	if !isDemo && !googleOnly {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
@@ -171,7 +177,9 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		}()
 	}
 
-	// Sync WhatsApp and iMessage periodically (every 30s, incremental)
+	// Sync local platforms periodically (every 30s, incremental). iMessage sync
+	// still runs in googleOnly mode — only the third-party platforms (WhatsApp,
+	// Signal) are skipped.
 	lastImportErr := map[string]string{}
 	syncLocalPlatforms := func() {
 		if app.Sandboxed() || isDemo {
@@ -196,18 +204,20 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 				Msg(successMsg)
 		}
 
-		if !a.UsesWhatsAppLiveBridge() {
+		if !googleOnly && !a.UsesWhatsAppLiveBridge() {
 			syncPlatform("whatsapp", "WhatsApp sync complete", func(store *db.Store) (*importer.ImportResult, error) {
 				return (&importer.WhatsAppNative{MyName: identityName}).ImportFromDB(store)
 			})
 		}
-		if signalStatus := a.SignalStatus(); signalStatus.Paired {
-			syncPlatform("signal", "Signal desktop sync complete", func(store *db.Store) (*importer.ImportResult, error) {
-				return (&importer.SignalDesktop{
-					MyName:    identityName,
-					MyAddress: signalStatus.Account,
-				}).ImportFromDB(store)
-			})
+		if !googleOnly {
+			if signalStatus := a.SignalStatus(); signalStatus.Paired {
+				syncPlatform("signal", "Signal desktop sync complete", func(store *db.Store) (*importer.ImportResult, error) {
+					return (&importer.SignalDesktop{
+						MyName:    identityName,
+						MyAddress: signalStatus.Account,
+					}).ImportFromDB(store)
+				})
+			}
 		}
 		syncPlatform("imessage", "iMessage sync complete", func(store *db.Store) (*importer.ImportResult, error) {
 			return (&importer.IMessage{MyName: identityName}).ImportFromDB(store)

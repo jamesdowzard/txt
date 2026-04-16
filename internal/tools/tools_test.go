@@ -34,6 +34,37 @@ func TestRegisterTools(t *testing.T) {
 	// Just verify it doesn't panic
 }
 
+func TestSelectedToolNames(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		has  []string
+		miss []string
+	}{
+		{"default minimal", "", []string{"send_message", "search_messages", "list_conversations", "conversation_stats"}, []string{"generate_story", "render_story", "*"}},
+		{"explicit minimal", "minimal", []string{"send_message"}, []string{"*"}},
+		{"all sentinel", "all", []string{"*"}, []string{"send_message"}},
+		{"custom list", "send_message,get_status", []string{"send_message", "get_status"}, []string{"search_messages", "*"}},
+		{"whitespace + case", " Send_Message , Get_Status ", []string{"send_message", "get_status"}, []string{"*"}},
+		{"empty list falls back to minimal", " , ,", []string{"send_message"}, []string{"*"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := selectedToolNames(tc.env)
+			for _, n := range tc.has {
+				if _, ok := got[n]; !ok {
+					t.Errorf("env=%q missing %q in %v", tc.env, n, got)
+				}
+			}
+			for _, n := range tc.miss {
+				if _, ok := got[n]; ok {
+					t.Errorf("env=%q unexpectedly contains %q", tc.env, n)
+				}
+			}
+		})
+	}
+}
+
 func TestGetMessagesEmpty(t *testing.T) {
 	a := testApp(t)
 	handler := getMessagesHandler(a)

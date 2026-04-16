@@ -34,7 +34,8 @@ pub fn run() {
                 .env("OPENMESSAGES_DATA_DIR", data_dir.to_string_lossy().to_string())
                 .env("OPENMESSAGES_PORT", "7007")
                 .env("OPENMESSAGES_LOG_LEVEL", "info")
-                .env("OPENMESSAGES_MACOS_NOTIFICATIONS", "1");
+                .env("OPENMESSAGES_MACOS_NOTIFICATIONS", "1")
+                .env("TEXTBRIDGE_GOOGLE_ONLY", "1");
 
             let (mut rx, child) = sidecar.spawn().expect("spawn backend sidecar");
 

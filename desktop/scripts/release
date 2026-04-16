@@ -18,7 +18,16 @@ TAURI_CONF="$REPO_DIR/src-tauri/tauri.conf.json"
 STABLE_ICON="$REPO_DIR/src-tauri/icons/icon-1024.png"
 
 TARGET_DIR=$(cd "$REPO_DIR/src-tauri" && cargo metadata --format-version 1 2>/dev/null | uv run --no-project python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory', '$REPO_DIR/src-tauri/target'))")
-BUILD_APP="$TARGET_DIR/release/bundle/macos/${APP_NAME}.app"
+BUILD_APP="$TARGET_DIR/universal-apple-darwin/release/bundle/macos/${APP_NAME}.app"
+
+# Ensure both Rust targets are present so cargo tauri build --target
+# universal-apple-darwin can produce a fat Mach-O for the Tauri shell.
+for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+    if ! rustup target list --installed 2>/dev/null | grep -q "^${triple}\$"; then
+        echo "Installing rustup target $triple..."
+        rustup target add "$triple"
+    fi
+done
 
 BUMP_TYPE="${1:-patch}"
 NO_TAG=false
@@ -48,8 +57,8 @@ echo "Release: v$CURRENT_VERSION -> v$NEW_VERSION"
 
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
 
-echo "Building ${APP_NAME}..."
-cargo tauri build 2>&1 | grep -v "failed to remove extra attributes" || true
+echo "Building ${APP_NAME} (universal: arm64 + x86_64)..."
+cargo tauri build --target universal-apple-darwin 2>&1 | grep -v "failed to remove extra attributes" || true
 
 if [[ ! -d "$BUILD_APP" ]]; then
     echo "Error: Build failed - app not found at $BUILD_APP"
@@ -63,13 +72,45 @@ rm -rf "$STABLE_APP"
 mv "$BUILD_APP" "$STABLE_APP"
 
 # Clean up stale builds from cargo target
-rm -rf "$TARGET_DIR/release/bundle/macos"/*.app 2>/dev/null || true
+rm -rf "$TARGET_DIR/universal-apple-darwin/release/bundle/macos"/*.app 2>/dev/null || true
 
 # Sign the app
+# Order matters: sign the sidecar (subcomponent) first, then the main binary,
+# then the outer bundle. codesign's subcomponent check otherwise fails the
+# main-binary pass before the sidecar has a signature attached.
 echo "Signing..."
 find "$STABLE_APP" -exec xattr -c {} \; 2>/dev/null || true
-codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$STABLE_APP/Contents/MacOS/"* 2>&1
-codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$STABLE_APP"
+SIDECAR="$STABLE_APP/Contents/MacOS/textbridge-backend"
+MAIN="$STABLE_APP/Contents/MacOS/textbridge"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$SIDECAR"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$MAIN"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$STABLE_APP"
+
+# Notarize and staple
+# Skip with SKIP_NOTARIZE=1 for fast dev iterations.
+# Set keychain profile up once with:
+#   xcrun notarytool store-credentials Textbridge \
+#     --apple-id <appleid> --team-id G54DLMPV94 --password <app-specific-pw>
+NOTARY_PROFILE="${NOTARY_KEYCHAIN_PROFILE:-Textbridge}"
+if [[ "${SKIP_NOTARIZE:-0}" == "1" ]]; then
+    echo "Notarization: skipped (SKIP_NOTARIZE=1)"
+elif ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    echo "Notarization: skipped — keychain profile '$NOTARY_PROFILE' not found"
+    echo "  Set up once with: xcrun notarytool store-credentials $NOTARY_PROFILE \\"
+    echo "    --apple-id <appleid> --team-id G54DLMPV94 --password <app-specific-pw>"
+else
+    echo "Notarizing..."
+    NOTARY_ZIP="$RELEASE_DIR/${APP_NAME}-notarize.zip"
+    rm -f "$NOTARY_ZIP"
+    /usr/bin/ditto -c -k --keepParent "$STABLE_APP" "$NOTARY_ZIP"
+    if xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait; then
+        echo "Stapling..."
+        xcrun stapler staple "$STABLE_APP"
+    else
+        echo "Notarization submission failed — bundle is signed but not notarized"
+    fi
+    rm -f "$NOTARY_ZIP"
+fi
 
 # Apply custom icon (bypasses macOS squircle jail)
 if [[ -f "$STABLE_ICON" ]] && command -v fileicon &> /dev/null; then
@@ -87,6 +128,14 @@ ln -sf "$STABLE_APP" "$SYMLINK"
 
 echo "  Deployed to $STABLE_APP"
 echo "  Symlinked at $SYMLINK"
+
+# Gatekeeper verification (informational)
+GK_STATUS=$(spctl -a -vv "$STABLE_APP" 2>&1 || true)
+if echo "$GK_STATUS" | grep -q "accepted"; then
+    echo "  Gatekeeper: $(echo "$GK_STATUS" | head -2 | tr '\n' ' ')"
+else
+    echo "  Gatekeeper: $(echo "$GK_STATUS" | head -2 | tr '\n' ' ')"
+fi
 
 if [[ "$NO_TAG" == "false" ]]; then
     if [[ -n $(git status --porcelain) ]]; then

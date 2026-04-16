@@ -47,16 +47,40 @@ Signing: `Developer ID Application: James Dowzard (G54DLMPV94)`. Bundle ID: `ai.
 
 The Tauri shell passes `OPENMESSAGES_DATA_DIR` → Go sidecar, pointing at the first path.
 
+## Google-only mode
+
+The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync still runs. CLI `./textbridge serve` without the flag retains upstream multi-platform behaviour.
+
+**One-off cleanup** after first upgrade: any WhatsApp/Signal conversations previously imported still live in `~/Library/Application Support/ai.james-is-an.textbridge/messages.db`. Move the file to Trash and re-pair Google Messages for a clean list.
+
 ## Known issues
 
 - **`cargo tauri build` ends with xattr error on macOS 26+** — bundle IS created; the `scripts/dev` and `scripts/release` scripts grep-filter the error. Just use those.
 - **WebView CORS blocks `fetch()` to localhost backend** — frontend probes readiness via `<img>` load (bypasses CORS), then `window.location.replace()` navigates.
 - **Sandbox is disabled in `entitlements.plist`** — enabling it breaks the Go sidecar subprocess spawn.
-- **Universal `lipo` binary silently crashes at runtime** — we ship arm64-only via `build-sidecar`, which uses `rustc -vV` host to pick the right GOARCH.
+- **Universal sidecar is lipo'd by `build-sidecar`** — Tauri 2's `externalBin` with `--target universal-apple-darwin` looks for a single file at `binaries/textbridge-backend-universal-apple-darwin`, not two arch-specific files. `build-sidecar` now produces the per-arch binaries plus a lipo'd universal. Set `BUILD_SIDECAR_HOST_ONLY=1` for a host-only binary during dev.
 
 ## MCP endpoints (optional)
 
-Backend exposes MCP at `http://127.0.0.1:7007/mcp/sse` and stdio transport when launched by an MCP client. Useful for hooking Claude Code into your messages (search, stats, etc). The upstream openmessage tools are still compiled in but WhatsApp/Signal/gchat imports are effectively dormant (UI hidden, session files absent).
+Backend exposes MCP at `http://127.0.0.1:7007/mcp/sse` and stdio transport when launched by an MCP client.
+
+**Default tool set (4):** `send_message`, `search_messages`, `list_conversations`, `conversation_stats` — kept tight so Claude Code's tool palette stays focused.
+
+Override via `TEXTBRIDGE_MCP_TOOLS`:
+
+| Value | Result |
+|-------|--------|
+| unset / `minimal` | the 4 above |
+| `all` | every registered tool (20) |
+| `name1,name2,…` | exactly those tools |
+
+Register in Claude Code (user scope):
+
+```bash
+claude mcp add --transport sse --scope user textbridge http://127.0.0.1:7007/mcp/sse
+```
+
+The Tauri app must be running (it owns the backend on port 7007). MCP config lives in `~/.claude.json`, not `~/.claude/settings.json`.
 
 ## Testing
 
