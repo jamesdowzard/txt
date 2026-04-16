@@ -1,10 +1,10 @@
-# Agent Progress - rebrand-textbridge
+# Agent Progress - update-readme
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-16T02:09:37Z
+# Created: 2026-04-16T05:17:26Z
 
-feature=rebrand-textbridge
-name=Rebrand macOS app from OpenMessage to Textbridge
+feature=update-readme
+name=Update README to Textbridge identity
 status=pending
 step=0
 step_name=Not started
-created=2026-04-16T02:09:37Z
+created=2026-04-16T05:17:26Z

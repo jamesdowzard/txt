@@ -1,152 +1,83 @@
-# OpenMessage
+# Textbridge
 
-Local-first universal message database with built-in MCP server. Ingests messages from SMS/RCS (Google Messages), Google Chat, iMessage, and WhatsApp.
+Native Tauri macOS app wrapping a Go backend (libgm) for reading and sending Google Messages from the Mac. Forked from [MaxGhenis/openmessage](https://github.com/MaxGhenis/openmessage) and retargeted for Google Messages only.
 
 ## Architecture
 
 ```
-├── cmd/              Go CLI commands (pair, serve, send, import)
+textbridge/
+├── main.go                # Go entrypoint (CLI: pair, serve, send, import)
+├── cmd/                   # Go command implementations
 ├── internal/
-│   ├── app/          Bootstrap, data dir, backfill
-│   ├── client/       libgm Google Messages protocol
-│   ├── db/           SQLite store (conversations, messages, contacts, unified_contacts, drafts)
-│   ├── importer/     Multi-platform import adapters (gchat, imessage, whatsapp)
-│   ├── story/        Stats computation + narrative story generation
-│   ├── tools/        MCP tools (18 tools)
-│   ├── viz/          Relationship visualization renderer (self-contained HTML)
-│   └── web/          HTTP API + embedded React UI
-├── macos/            Swift macOS app wrapper
-│   ├── OpenMessage/  Swift package (BackendManager, PairingView, etc.)
-│   └── build.sh      Builds universal binary + .app + .dmg
-├── site/             Static website (deployed to openmessage.ai)
-└── vercel.json       Vercel config (root — NOT site/vercel.json)
+│   ├── app/               # Bootstrap, data dir, backfill
+│   ├── client/            # libgm Google Messages protocol
+│   ├── db/                # SQLite store (conversations, messages, contacts, drafts)
+│   ├── tools/             # MCP tools
+│   └── web/static/        # Embedded web UI (single HTML file loaded in WebView)
+├── desktop/               # Tauri 2 macOS app
+│   ├── src-tauri/         # Rust shell: spawns sidecar, owns window
+│   │   ├── src/lib.rs     # Sidecar lifecycle
+│   │   └── binaries/      # Go backend binary (gitignored)
+│   ├── src/               # TypeScript loader (image-probe then navigate to backend)
+│   └── scripts/           # build-sidecar, dev, release
+└── site/                  # (legacy) upstream's marketing site — not used here
 ```
 
-## Multi-platform import
+## Build + deploy
 
 ```bash
-openmessage import gchat /path/to/Takeout/Google\ Chat/Groups/ --email you@gmail.com
-openmessage import gchat-conversation /path/to/messages.json --email you@gmail.com
-openmessage import imessage                     # reads ~/Library/Messages/chat.db (needs Full Disk Access)
-openmessage import whatsapp /path/to/chat.txt --name "Your Name"
+# Go backend (produces ./textbridge)
+go build -o textbridge .
+
+# Tauri app
+cd desktop
+./scripts/build-sidecar      # required before cargo tauri build
+./scripts/release patch      # build, sign, install to /Applications/Textbridge.app
+./scripts/dev --launch       # orange dev variant alongside stable
 ```
 
-### MCP tools
+Signing: `Developer ID Application: James Dowzard (G54DLMPV94)`. Bundle ID: `ai.james-is-an.textbridge`.
 
-18 tools registered:
-- `get_messages`, `get_conversation`, `search_messages` — cross-platform by default
-- `list_conversations` — optional `source_platform` filter (sms, gchat, imessage, whatsapp)
-- `get_person_messages` — all messages with a person across all platforms
-- `get_person_messages_range` — date-filtered version of get_person_messages (for deep-diving into specific periods)
-- `import_messages` — import from any supported source
-- `conversation_stats` — volume, heatmap, phrases, response times, gaps (single conversation)
-- `generate_story` — narrative chapters with optional Claude API enhancement (single conversation)
-- `person_stats` — cross-platform stats for all 1:1 messages with a person (merges + deduplicates)
-- `generate_person_story` — cross-platform narrative story for a person (merges + deduplicates)
-- `generate_viz` — self-contained HTML visualization combining data dashboards + narrative (see below)
-- `render_story` — render a pre-built Story JSON into HTML viz; supports `photo_paths` (curated list) or `photos_dir`
-- `send_message`, `draft_message`, `download_media`, `list_contacts`, `get_status`
+## Data locations
 
-### HTTP API
+| Path | Contents |
+|------|----------|
+| `~/Library/Application Support/ai.james-is-an.textbridge/` | Active app data (session, messages.db) |
+| `~/.local/share/openmessage/` | Legacy location (`./textbridge pair` writes here) |
 
-- `GET /api/stats/{conversation_id}` — conversation statistics JSON
-- `GET /api/story/{conversation_id}?style=intimate&api_key=...` — generated story JSON
-- `GET /api/conversations?limit=50` — list all conversations (all platforms)
-- `GET /api/search?q=...` — search across all platforms
+The Tauri shell passes `OPENMESSAGES_DATA_DIR` → Go sidecar, pointing at the first path.
 
-### Schema
+## Known issues
 
-Messages and conversations have `source_platform` (sms/gchat/imessage/whatsapp/signal/telegram) and messages have `source_id` for dedup. Unified contacts table maps people across platforms.
+- **`cargo tauri build` ends with xattr error on macOS 26+** — bundle IS created; the `scripts/dev` and `scripts/release` scripts grep-filter the error. Just use those.
+- **WebView CORS blocks `fetch()` to localhost backend** — frontend probes readiness via `<img>` load (bypasses CORS), then `window.location.replace()` navigates.
+- **Sandbox is disabled in `entitlements.plist`** — enabling it breaks the Go sidecar subprocess spawn.
+- **Universal `lipo` binary silently crashes at runtime** — we ship arm64-only via `build-sidecar`, which uses `rustc -vV` host to pick the right GOARCH.
 
-## Vercel deployment (openmessage.ai)
+## MCP endpoints (optional)
 
-**CRITICAL: Always deploy from the repo root**, not from `~` or any other directory. The `.vercel/project.json` links to the correct project/scope.
-
-**Config lives at root `vercel.json`**, not `site/vercel.json`. The root config sets `outputDirectory: "site"` and `cleanUrls: true`. A `.vercelignore` excludes Go/Swift build artifacts.
-
-**Scope: `max-ghenis-projects`** (personal account, NOT PolicyEngine).
-
-Deploy:
-```bash
-cd /Users/maxghenis/openmessages && vercel --prod
-```
-
-**Always verify after deploy:**
-```bash
-curl -s -o /dev/null -w "%{http_code}" https://openmessage.ai
-```
-
-**Domains:** `openmessage.ai` (primary) and `openmessages.ai` (alias), both on Cloudflare DNS → 76.76.21.21.
-
-## Building the macOS app
-
-```bash
-./macos/build.sh
-```
-
-This builds: Go universal binary (arm64+amd64) → Swift app → .app bundle → .dmg
-
-To install locally:
-```bash
-cp -R macos/build/OpenMessage.app /Applications/ && xattr -cr /Applications/OpenMessage.app
-```
-
-To update the GitHub release:
-```bash
-gh release upload v0.1.0 macos/build/OpenMessage.dmg --repo MaxGhenis/openmessage --clobber
-```
+Backend exposes MCP at `http://127.0.0.1:7007/mcp/sse` and stdio transport when launched by an MCP client. Useful for hooking Claude Code into your messages (search, stats, etc). The upstream openmessage tools are still compiled in but WhatsApp/Signal/gchat imports are effectively dormant (UI hidden, session files absent).
 
 ## Testing
 
 ```bash
-go test ./cmd/ -v      # Unit + integration tests
-go test ./... -v       # All tests
+go test ./cmd/ -v
+go test ./... -v
 ```
 
-## Relationship visualization (`generate_viz`)
+## Upstream sync
 
-Generates a self-contained HTML file combining data dashboards with narrative chapters. Output is deployable to Vercel or viewable locally.
+Upstream is `MaxGhenis/openmessage` (fetched as remote `upstream`). To pull upstream fixes:
 
-**Sections**: password gate, hero, timeline nav, narrative chapters (early/middle/late), monthly volume chart (Chart.js), sender split donut, response times, hour-of-week heatmap, phrase cloud (colored by sender ratio), longest gap callout, interspersed photo breaks (chronologically aligned), interludes, closing.
-
-**Key parameters**: `name` (person to search), `output_path`, `timezone` (default ET), `password`, `api_key` (for Claude-generated narrative), colors (`primary_color`, `secondary_color`, etc.).
-
-**Architecture**:
-- `internal/viz/config.go` — `VizConfig` struct, section ordering, color theming
-- `internal/viz/render.go` — `RenderHTML()` orchestrator, Chart.js data building
-- `internal/viz/template.go` — Go html/template with all CSS/JS inline (except CDN fonts + Chart.js)
-- `internal/viz/photos.go` — `Photo` struct, `EncodePhotosFromDir/Paths()`, date parsing from filenames, chronological sorting
-- `internal/tools/viz.go` — MCP tool handler
-
-**Stats engine extensions** (`internal/story/stats.go`):
-- `PhraseCount.BySender` — per-sender phrase counts for colored word cloud
-- `ComputeStats(messages, tz)` — timezone parameter for TZ-shifted heatmap
-
-## Agentic story generation (`/generate-story`)
-
-Claude Code slash command that produces fact-grounded relationship visualizations. Instead of a single-pass API call that halluculates, the agent explores conversations agentically:
-
-1. `person_stats` → identify 4-8 pivotal periods from volume patterns
-2. `get_person_messages_range` → deep-dive into each period's actual messages
-2.5. Photo curation → visually inspect candidate photos, select best 15-25
-3. Write chapters grounded in real quotes and events
-4. `render_story` → combine narrative with data dashboards into HTML
-
-**Usage:** `/generate-story Jenn` from Claude Code in this project.
-
-**Key tools:**
-- `get_person_messages_range` — date-filtered cross-platform messages for deep-dives
-- `render_story` — accepts pre-built Story JSON + person name, computes stats, renders HTML
-
-**Command file:** `.claude/commands/generate-story.md`
+```bash
+git fetch upstream
+git merge upstream/main   # expect conflicts on README, CLAUDE.md, internal/web/static/index.html
+```
 
 ## Key files
 
-- `internal/app/app.go` — data dir resolution (`OPENMESSAGES_DATA_DIR` env var, defaults to `~/.local/share/openmessage`)
-- `internal/db/db.go` — schema, structs, migration
-- `internal/importer/` — gchat.go, imessage.go, whatsapp.go
-- `internal/story/stats.go` — conversation statistics computation (with timezone + per-sender phrases)
-- `internal/story/generate.go` — narrative story generation (local or Claude API)
-- `internal/viz/` — relationship visualization renderer (config, template, render, photos)
-- `internal/client/events.go` — handles Google Messages protocol events
-- `macos/OpenMessage/Sources/BackendManager.swift` — launches Go backend, manages app state
+- `main.go`, `cmd/pair.go`, `cmd/serve.go` — Go entrypoints
+- `internal/web/static/index.html` — web UI (frosted-dark CSS tokens at `:root`, WhatsApp/Signal hidden)
+- `desktop/src-tauri/src/lib.rs` — Tauri setup, sidecar lifecycle
+- `desktop/src-tauri/tauri.conf.json` — bundle config, `externalBin` sidecar reference
+- `desktop/src-tauri/capabilities/default.json` — Tauri permissions (shell:allow-execute, shell:allow-spawn)
