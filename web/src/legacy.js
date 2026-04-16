@@ -3212,6 +3212,46 @@
     }
   });
 
+  // Drag-and-drop: anywhere over the chat pane accepts an image/video drop.
+  // Only the first matching file is taken (compose row supports one attachment).
+  const $chatPane = document.getElementById('chat-pane');
+  if ($chatPane) {
+    let dragDepth = 0;
+    const pickFirstMediaFile = (dataTransfer) => {
+      if (!dataTransfer || !dataTransfer.files) return null;
+      for (const f of dataTransfer.files) {
+        if (f.type && (f.type.startsWith('image/') || f.type.startsWith('video/'))) return f;
+      }
+      return null;
+    };
+    $chatPane.addEventListener('dragenter', (e) => {
+      if (!conversationSupportsMediaOutbound(activeConversation)) return;
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      e.preventDefault();
+      dragDepth++;
+      $chatPane.classList.add('drag-over');
+    });
+    $chatPane.addEventListener('dragover', (e) => {
+      if (!conversationSupportsMediaOutbound(activeConversation)) return;
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    $chatPane.addEventListener('dragleave', () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) $chatPane.classList.remove('drag-over');
+    });
+    $chatPane.addEventListener('drop', (e) => {
+      dragDepth = 0;
+      $chatPane.classList.remove('drag-over');
+      if (!conversationSupportsMediaOutbound(activeConversation)) return;
+      const file = pickFirstMediaFile(e.dataTransfer);
+      if (!file) return;
+      e.preventDefault();
+      setAttachment(file);
+    });
+  }
+
   // File picker button
   $attachBtn.addEventListener('click', () => {
     if (!conversationSupportsMediaOutbound(activeConversation)) {

@@ -718,6 +718,25 @@ html, body {
   flex-direction: column;
   background: var(--bg-deep);
   overflow: hidden;
+  position: relative;
+}
+
+.chat-pane.drag-over::after {
+  content: 'Drop image or video to attach';
+  position: absolute;
+  inset: 12px;
+  border: 2px dashed var(--border-accent);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 100;
+  backdrop-filter: blur(2px);
 }
 
 .chat-header {
