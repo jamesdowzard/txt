@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at`
 
 const (
 	NotificationModeAll      = "all"
@@ -108,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +213,18 @@ func (s *Store) SetConversationNotificationMode(id, mode string) error {
 	return err
 }
 
+// SetConversationPinned toggles a conversation's pinned state. When pinning,
+// pinned_at is set to the current unix second so newer pins sort above older
+// ones; when unpinning, pinned_at is reset to 0.
+func (s *Store) SetConversationPinned(id string, pinned bool) error {
+	var ts int64
+	if pinned {
+		ts = time.Now().Unix()
+	}
+	_, err := s.db.Exec(`UPDATE conversations SET pinned_at = ? WHERE conversation_id = ?`, ts, id)
+	return err
+}
+
 // SetConversationFolder moves a conversation to `folder` (inbox/archive/spam).
 // Returns an error for unknown folder values.
 func (s *Store) SetConversationFolder(id, folder string) error {
@@ -237,7 +250,7 @@ func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversa
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE folder = ?
-		ORDER BY last_message_ts DESC
+		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, normalized, limit)
 	if err != nil {
@@ -251,7 +264,7 @@ func (s *Store) ListConversations(limit int) ([]*Conversation, error) {
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
-		ORDER BY last_message_ts DESC
+		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, limit)
 	if err != nil {
@@ -279,7 +292,7 @@ func (s *Store) ListConversationsByPlatform(platform string, limit int) ([]*Conv
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE source_platform = ?
-		ORDER BY last_message_ts DESC
+		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, platform, limit)
 	if err != nil {
@@ -306,7 +319,7 @@ func (s *Store) SearchConversationsByMetadata(query string, limit int) ([]*Conve
 				JOIN contacts c ON c.number = m.sender_number
 				WHERE c.name LIKE ? OR c.number LIKE ?
 			)
-		ORDER BY last_message_ts DESC
+		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", limit)
 	if err != nil {
@@ -324,7 +337,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -338,7 +351,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

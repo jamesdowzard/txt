@@ -446,6 +446,24 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			writeJSON(w, convo)
 			return
 		}
+		if action == "pin" || action == "unpin" {
+			if r.Method != http.MethodPost {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			if err := store.SetConversationPinned(convID, action == "pin"); err != nil {
+				httpError(w, "set pin: "+err.Error(), 500)
+				return
+			}
+			convo, err := store.GetConversation(convID)
+			if err != nil {
+				httpError(w, "get conversation: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			writeJSON(w, convo)
+			return
+		}
 		if action == "archive" || action == "unarchive" {
 			if r.Method != http.MethodPost {
 				httpError(w, "method not allowed", 405)

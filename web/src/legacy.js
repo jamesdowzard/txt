@@ -332,6 +332,37 @@
     }
   }
 
+  function pinIconHTML(active) {
+    // Stylised pushpin — filled when active.
+    const fill = active ? 'currentColor' : 'none';
+    return `<svg viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-2-7-2-2V4H9v4L7 10l-2 7z"/></svg>`;
+  }
+
+  async function pinConversation(conv, pin) {
+    if (!conv || !conv.ConversationID) return;
+    const action = pin ? 'pin' : 'unpin';
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`${action} failed: ${body || resp.status}`);
+        return;
+      }
+      const updated = await resp.json();
+      if (activeConvoId === conv.ConversationID) {
+        activeConversation = updated;
+        refreshConversationChrome();
+      }
+      await loadConversations();
+    } catch (err) {
+      showThreadFeedback(`${action} failed: ${err.message || err}`);
+    }
+  }
+
   function archiveIconHTML() {
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`;
   }
@@ -1175,8 +1206,19 @@
       >${isArchived ? unarchiveIconHTML() : archiveIconHTML()}</button>
     `
       : '';
+    const isPinned = (activeConversation.PinnedAt || 0) > 0;
+    const pinButtonHTML = `
+      <button
+        type="button"
+        class="chat-header-action-btn${isPinned ? ' active' : ''}"
+        id="chat-header-pin-btn"
+        title="${isPinned ? 'Unpin conversation' : 'Pin conversation'}"
+        aria-label="${isPinned ? 'Unpin conversation' : 'Pin conversation'}"
+      >${pinIconHTML(isPinned)}</button>
+    `;
     $chatHeaderActions.innerHTML = `
       ${leaveButtonHTML}
+      ${pinButtonHTML}
       ${archiveButtonHTML}
       <button
         type="button"
@@ -1186,6 +1228,12 @@
         aria-label="Notification settings"
       >${notificationActionIconHTML(notificationMode)}</button>
     `;
+    const $pinBtn = document.getElementById('chat-header-pin-btn');
+    if ($pinBtn) {
+      $pinBtn.addEventListener('click', () => {
+        pinConversation(activeConversation, !isPinned);
+      });
+    }
     const $archiveBtn = document.getElementById('chat-header-archive-btn');
     if ($archiveBtn) {
       $archiveBtn.addEventListener('click', () => {
