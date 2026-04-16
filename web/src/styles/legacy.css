@@ -1508,6 +1508,71 @@ html, body {
   color: var(--bg-deep);
 }
 
+.schedule-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.schedule-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.schedule-btn:disabled { opacity: 0.3; cursor: default; }
+.schedule-btn svg { width: 18px; height: 18px; }
+
+.schedule-menu {
+  position: absolute;
+  bottom: 64px;
+  right: 80px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+  display: none;
+  flex-direction: column;
+  min-width: 180px;
+  z-index: 200;
+}
+.schedule-menu.show { display: flex; }
+.schedule-menu button {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+.schedule-menu button:hover { background: var(--bg-hover); }
+
+.outbox-banner {
+  padding: 6px 28px;
+  background: var(--accent-dim);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: none;
+}
+.outbox-banner.show { display: block; }
+.outbox-banner button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 6px;
+}
+
 /* ─── Attachment Preview ─── */
 .attach-preview {
   display: none;

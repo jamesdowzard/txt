@@ -257,6 +257,10 @@ func (s *Store) migrate() error {
 	// Index for platform-filtered conversation queries
 	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_platform ON conversations(source_platform)`)
 
+	if err := s.migrateOutbox(); err != nil {
+		return err
+	}
+
 	if err := s.enableFTS(); err != nil {
 		return err
 	}

@@ -3158,6 +3158,13 @@
       || (!hasText && !hasMedia)
       || (hasText && !conversationSupportsOutbound(activeConversation))
       || (hasMedia && !conversationSupportsMediaOutbound(activeConversation));
+    // Schedule supports SMS/RCS only and requires text (no media scheduling yet).
+    const schedBtn = document.getElementById('schedule-btn');
+    if (schedBtn) {
+      schedBtn.disabled = !activeConversation
+        || !hasText
+        || sourcePlatformOf(activeConversation) !== 'sms';
+    }
   }
 
   $composeInput.addEventListener('input', autoResize);
@@ -3168,6 +3175,117 @@
     }
   });
   $sendBtn.addEventListener('click', sendMessage);
+
+  // ─── Scheduled send ───
+  const $scheduleBtn = document.getElementById('schedule-btn');
+  let $scheduleMenu = null;
+  function buildSchedulePresets() {
+    const now = Date.now();
+    const presets = [
+      { label: 'In 5 minutes', delta: 5 * 60 * 1000 },
+      { label: 'In 1 hour', delta: 60 * 60 * 1000 },
+      { label: 'In 4 hours', delta: 4 * 60 * 60 * 1000 },
+    ];
+    // Tomorrow 9am (local time)
+    const tomorrow9 = new Date(now);
+    tomorrow9.setDate(tomorrow9.getDate() + 1);
+    tomorrow9.setHours(9, 0, 0, 0);
+    presets.push({ label: 'Tomorrow at 9 AM', sendAt: Math.floor(tomorrow9.getTime() / 1000) });
+    return presets.map(p => ({
+      label: p.label,
+      sendAt: p.sendAt || Math.floor((now + p.delta) / 1000),
+    }));
+  }
+  function ensureScheduleMenu() {
+    if ($scheduleMenu) return $scheduleMenu;
+    $scheduleMenu = document.createElement('div');
+    $scheduleMenu.className = 'schedule-menu';
+    $scheduleMenu.id = 'schedule-menu';
+    document.body.appendChild($scheduleMenu);
+    document.addEventListener('click', (e) => {
+      if (!$scheduleMenu.classList.contains('show')) return;
+      if (e.target.closest('.schedule-menu') || e.target.closest('#schedule-btn')) return;
+      $scheduleMenu.classList.remove('show');
+    });
+    return $scheduleMenu;
+  }
+  async function scheduleCurrentMessage(sendAtUnix) {
+    if (!activeConvoId || !activeConversation) return;
+    const text = $composeInput.value.trim();
+    if (!text) return;
+    if (sourcePlatformOf(activeConversation) !== 'sms') {
+      showThreadFeedback('Scheduled send is only supported for SMS/RCS conversations.');
+      return;
+    }
+    try {
+      await postJSON('/api/outbox', {
+        conversation_id: activeConvoId,
+        body: text,
+        send_at: sendAtUnix,
+      });
+      $composeInput.value = '';
+      autoResize();
+      $sendBtn.disabled = true;
+      $scheduleBtn.disabled = true;
+      const when = new Date(sendAtUnix * 1000);
+      showThreadFeedback(`Scheduled for ${when.toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })}.`);
+      refreshOutboxBanner();
+    } catch (err) {
+      showThreadFeedback(`Schedule failed: ${err.message || err}`);
+    }
+  }
+  if ($scheduleBtn) {
+    $scheduleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = ensureScheduleMenu();
+      const presets = buildSchedulePresets();
+      menu.innerHTML = presets.map((p, i) => `<button data-idx="${i}">${p.label}</button>`).join('');
+      menu.querySelectorAll('button').forEach((btn, i) => {
+        btn.addEventListener('click', () => {
+          menu.classList.remove('show');
+          scheduleCurrentMessage(presets[i].sendAt);
+        });
+      });
+      menu.classList.toggle('show');
+    });
+  }
+
+  async function refreshOutboxBanner() {
+    let $banner = document.getElementById('outbox-banner');
+    if (!$banner) {
+      $banner = document.createElement('div');
+      $banner.id = 'outbox-banner';
+      $banner.className = 'outbox-banner';
+      const chatPane = document.getElementById('chat-pane');
+      if (chatPane && chatPane.firstChild) {
+        chatPane.insertBefore($banner, chatPane.firstChild);
+      }
+    }
+    try {
+      const items = await fetchJSON('/api/outbox?status=pending');
+      const mineHere = items.filter(it => it.conversation_id === activeConvoId);
+      if (mineHere.length === 0) {
+        $banner.classList.remove('show');
+        return;
+      }
+      const next = mineHere[0];
+      const when = new Date(next.send_at * 1000);
+      $banner.innerHTML = `${mineHere.length} scheduled — next at ${when.toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })} <button data-id="${next.id}">Cancel</button>`;
+      $banner.classList.add('show');
+      $banner.querySelector('button')?.addEventListener('click', async () => {
+        try {
+          await fetch(`/api/outbox/${next.id}`, { method: 'DELETE' });
+          refreshOutboxBanner();
+        } catch (err) {
+          showThreadFeedback('Cancel failed: ' + (err.message || err));
+        }
+      });
+    } catch (err) {
+      // silent — banner is best-effort
+    }
+  }
+  // Refresh banner whenever the active conversation changes.
+  setInterval(refreshOutboxBanner, 30000);
 
   // ─── Attachments (paste + file picker) ───
   function setAttachment(file) {

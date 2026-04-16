@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -315,6 +316,11 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 	} else {
 		logger.Debug().Msg("Skipping MCP stdio transport on interactive terminal")
 	}
+
+	// Outbox dispatcher (scheduled send)
+	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
+	defer cancelOutbox()
+	a.StartOutboxDispatcher(outboxCtx)
 
 	// Block until signal
 	sigCh := make(chan os.Signal, 1)
