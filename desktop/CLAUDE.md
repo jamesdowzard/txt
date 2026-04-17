@@ -63,18 +63,25 @@ in `tauri.conf.json` under `plugins.updater`.
 **One-time key setup** (run once, not per release):
 
 ```bash
-cargo tauri signer generate -w ~/.tauri/textbridge-updater.key
+PW="$(openssl rand -base64 24)"
+mkdir -p ~/.tauri
+cargo tauri signer generate --ci -p "$PW" -w ~/.tauri/textbridge-updater.key
+
 security add-generic-password -a textbridge-updater -s textbridge-updater \
   -w "$(cat ~/.tauri/textbridge-updater.key)"
 security add-generic-password -a textbridge-updater-pub -s textbridge-updater-pub \
   -w "$(cat ~/.tauri/textbridge-updater.key.pub)"
-# Paste the pubkey into tauri.conf.json (replacing the REPLACE_WITH_... placeholder):
+security add-generic-password -a textbridge-updater-password -s textbridge-updater-password \
+  -w "$PW"
+
+# Paste the pubkey into tauri.conf.json (replacing the placeholder):
 ./scripts/updater-key pubkey
 ```
 
-Then move `~/.tauri/textbridge-updater.key{,.pub}` to Vaultwarden and delete from
-disk — keychain is the source of truth. `./scripts/updater-key check` verifies
-both keys are present.
+Then move `~/.tauri/textbridge-updater.key{,.pub}` + `$PW` to Vaultwarden (or
+copy to `~/.credentials/`) and delete from `~/.tauri/` — the keychain copies
+are the source of truth at build time. `./scripts/updater-key check` verifies
+all three entries are present.
 
 **Per-release** (handled by `./scripts/release`):
 

@@ -1,10 +1,10 @@
-# Agent Progress - tb-search-filters
+# Agent Progress - tb-updater-password
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:35:23Z
+# Created: 2026-04-17T01:41:16Z
 
-feature=tb-search-filters
-name=tb-search-filters
+feature=tb-updater-password
+name=tb-updater-password
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:35:23Z
+created=2026-04-17T01:41:16Z

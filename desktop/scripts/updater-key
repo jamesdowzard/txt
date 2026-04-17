@@ -2,38 +2,47 @@
 # Manage the Tauri updater signing key in the macOS keychain.
 #
 # Sub-commands:
-#   check    Exit 0 if the private key + pubkey are stored. Exit 1 with
-#            instructions otherwise.
-#   export   Print the private key contents to stdout. Used by the
-#            release script via:
-#              export TAURI_SIGNING_PRIVATE_KEY="$(./scripts/updater-key export)"
-#   pubkey   Print the base64-encoded public key (for tauri.conf.json).
+#   check     Exit 0 if the private key + pubkey + password are stored.
+#             Exit 1 with setup instructions otherwise.
+#   export    Print the private key contents to stdout. Used by the release
+#             script via:
+#               export TAURI_SIGNING_PRIVATE_KEY="$(./scripts/updater-key export)"
+#   pubkey    Print the base64-encoded public key (for tauri.conf.json).
+#   password  Print the private-key password to stdout. Used by the release
+#             script via:
+#               export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(./scripts/updater-key password)"
 #
 # One-time setup (the user runs this once, never the agent):
-#   tauri signer generate -w ~/.tauri/textbridge-updater.key
+#   # 1. Pick a strong password and stash it:
+#   PW="$(openssl rand -base64 24)"
+#   mkdir -p ~/.tauri
+#   cargo tauri signer generate --ci -p "$PW" -w ~/.tauri/textbridge-updater.key
 #   security add-generic-password -a textbridge-updater -s textbridge-updater \
 #     -w "$(cat ~/.tauri/textbridge-updater.key)"
-#   security add-generic-password -a textbridge-updater-pub \
-#     -s textbridge-updater-pub \
+#   security add-generic-password -a textbridge-updater-pub -s textbridge-updater-pub \
 #     -w "$(cat ~/.tauri/textbridge-updater.key.pub)"
-#   # Then paste the pubkey contents into desktop/src-tauri/tauri.conf.json
-#   # under plugins.updater.pubkey, replacing the placeholder.
+#   security add-generic-password -a textbridge-updater-password -s textbridge-updater-password \
+#     -w "$PW"
+#   # Paste the pubkey contents into desktop/src-tauri/tauri.conf.json under
+#   # plugins.updater.pubkey, replacing the placeholder.
 #
-# After setup, ~/.tauri/textbridge-updater.key{,.pub} should be moved to a
-# password manager (Vaultwarden) or deleted from disk — keychain is the
-# source of truth.
+# After setup, ~/.tauri/textbridge-updater.key{,.pub} + the password value
+# should be moved to Vaultwarden (or ~/.credentials/) — keychain is the
+# source of truth at build time.
 set -e
 
 ACCOUNT_PRIV="textbridge-updater"
 ACCOUNT_PUB="textbridge-updater-pub"
+ACCOUNT_PW="textbridge-updater-password"
 
 usage() {
     cat <<EOF
-Usage: $0 <check|export|pubkey>
+Usage: $0 <check|export|pubkey|password>
 
-  check    Verify the updater keys are present in the keychain.
-  export   Print the private key contents to stdout.
-  pubkey   Print the base64-encoded public key.
+  check     Verify the updater keys + password are present in the keychain.
+  export    Print the private key contents to stdout.
+  pubkey    Print the base64-encoded public key.
+  password  Print the private-key password.
 EOF
     exit 1
 }
@@ -41,31 +50,30 @@ EOF
 setup_help() {
     cat >&2 <<EOF
 
-Updater key not found in keychain.
+Updater key not fully configured in keychain.
 
 One-time setup (run as your user):
 
-  1. Generate the key pair (no password — the keychain protects it):
+  PW="\$(openssl rand -base64 24)"
+  mkdir -p ~/.tauri
+  cargo tauri signer generate --ci -p "\$PW" -w ~/.tauri/textbridge-updater.key
 
-       cargo tauri signer generate -w ~/.tauri/textbridge-updater.key
+  security add-generic-password \\
+    -a $ACCOUNT_PRIV -s $ACCOUNT_PRIV \\
+    -w "\$(cat ~/.tauri/textbridge-updater.key)"
+  security add-generic-password \\
+    -a $ACCOUNT_PUB -s $ACCOUNT_PUB \\
+    -w "\$(cat ~/.tauri/textbridge-updater.key.pub)"
+  security add-generic-password \\
+    -a $ACCOUNT_PW -s $ACCOUNT_PW \\
+    -w "\$PW"
 
-  2. Store both halves in the macOS keychain:
+  # Paste the pubkey contents into desktop/src-tauri/tauri.conf.json
+  # under plugins.updater.pubkey:
+  ./scripts/updater-key pubkey
 
-       security add-generic-password \\
-         -a $ACCOUNT_PRIV -s $ACCOUNT_PRIV \\
-         -w "\$(cat ~/.tauri/textbridge-updater.key)"
-
-       security add-generic-password \\
-         -a $ACCOUNT_PUB -s $ACCOUNT_PUB \\
-         -w "\$(cat ~/.tauri/textbridge-updater.key.pub)"
-
-  3. Paste the pubkey contents into desktop/src-tauri/tauri.conf.json
-     under plugins.updater.pubkey (replacing the REPLACE_WITH_... placeholder):
-
-       ./scripts/updater-key pubkey
-
-  4. Move ~/.tauri/textbridge-updater.key{,.pub} to Vaultwarden, then delete
-     them from disk — the keychain copy is now the source of truth.
+  # Then move ~/.tauri/textbridge-updater.key{,.pub} and \$PW to Vaultwarden
+  # or ~/.credentials/, delete from ~/.tauri/.
 
 EOF
     exit 1
@@ -79,7 +87,11 @@ cmd_check() {
         echo "Updater pubkey missing from keychain (account=$ACCOUNT_PUB)." >&2
         setup_help
     fi
-    echo "Updater keys present in keychain (accounts: $ACCOUNT_PRIV, $ACCOUNT_PUB)."
+    if ! security find-generic-password -a "$ACCOUNT_PW" -s "$ACCOUNT_PW" -w >/dev/null 2>&1; then
+        echo "Updater password missing from keychain (account=$ACCOUNT_PW)." >&2
+        setup_help
+    fi
+    echo "Updater keys present in keychain (accounts: $ACCOUNT_PRIV, $ACCOUNT_PUB, $ACCOUNT_PW)."
 }
 
 cmd_export() {
@@ -94,9 +106,16 @@ cmd_pubkey() {
     fi
 }
 
+cmd_password() {
+    if ! security find-generic-password -a "$ACCOUNT_PW" -s "$ACCOUNT_PW" -w 2>/dev/null; then
+        setup_help
+    fi
+}
+
 case "${1:-}" in
-    check)  cmd_check ;;
-    export) cmd_export ;;
-    pubkey) cmd_pubkey ;;
-    *)      usage ;;
+    check)    cmd_check ;;
+    export)   cmd_export ;;
+    pubkey)   cmd_pubkey ;;
+    password) cmd_password ;;
+    *)        usage ;;
 esac

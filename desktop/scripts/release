@@ -74,12 +74,17 @@ else
         exit 1
     fi
     UPDATER_ENABLED=true
-    # Export the private key from keychain for the duration of the build.
-    # tauri-cli reads TAURI_SIGNING_PRIVATE_KEY to sign the .app.tar.gz that
-    # createUpdaterArtifacts emits. Empty password — keychain ACL is the gate.
-    TAURI_SIGNING_PRIVATE_KEY="$("$UPDATER_KEY_SCRIPT" export)"
-    export TAURI_SIGNING_PRIVATE_KEY
-    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+    # Pull key + passphrase from keychain. tauri-cli reads TAURI_SIGNING_PRIVATE_KEY
+    # (plus the matching _PASSWORD env) to sign the .app.tar.gz that
+    # createUpdaterArtifacts emits; `tauri signer sign` reads the same pair.
+    _signing_key=$("$UPDATER_KEY_SCRIPT" export)
+    _signing_pw=$("$UPDATER_KEY_SCRIPT" password)
+    # cargo tauri build reads TAURI_SIGNING_PRIVATE_KEY{,_PASSWORD};
+    # cargo tauri signer sign reads TAURI_PRIVATE_KEY{,_PASSWORD}. Set both.
+    export TAURI_SIGNING_PRIVATE_KEY=$_signing_key
+    export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$_signing_pw
+    export TAURI_PRIVATE_KEY=$_signing_key
+    export TAURI_PRIVATE_KEY_PASSWORD=$_signing_pw
 fi
 
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
@@ -185,9 +190,9 @@ if [[ "$UPDATER_ENABLED" == "true" ]]; then
     (cd "$RELEASE_DIR" && tar czf "$UPDATER_TARBALL" "${APP_NAME}.app")
 
     # Sign the tarball. tauri-cli writes <FILE>.sig next to the input.
+    # --password passthrough via env; the flag form confuses the regex.
     bunx tauri signer sign \
         --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
-        --password "" \
         "$UPDATER_TARBALL" >/dev/null
 
     if [[ ! -f "$UPDATER_SIG" ]]; then
