@@ -122,6 +122,17 @@ The harness pre-commit hook blocks direct commits to `main` / `develop`. When `.
 
 Run from a feature branch instead and the script commits + pushes to that branch (no PR), assuming the caller owns the merge.
 
+## macOS Shortcuts / automation
+
+The `textbridge://` URL scheme is the Shortcuts entrypoint. Recipes and
+action reference live in `../docs/shortcuts.md`. Handled in
+`desktop/src-tauri/src/lib.rs::run` via `tauri_plugin_deep_link`; the
+WebView side parses the URL in `web/src/legacy.js::handleDeepLink`.
+
+Supported actions today: `compose`, `search`, `conversation/<id>`, `open`.
+Adding a new action is two edits — the `handleDeepLink` switch statement
++ a row in `docs/shortcuts.md`.
+
 ## Adding Rust commands
 
 ```rust

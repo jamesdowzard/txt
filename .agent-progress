@@ -1,10 +1,10 @@
-# Agent Progress - tb-notification-reply
+# Agent Progress - tb-shortcuts
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:57:36Z
+# Created: 2026-04-17T02:09:16Z
 
-feature=tb-notification-reply
-name=tb-notification-reply
+feature=tb-shortcuts
+name=tb-shortcuts
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:57:36Z
+created=2026-04-17T02:09:16Z

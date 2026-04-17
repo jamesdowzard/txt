@@ -4936,10 +4936,44 @@
   function handleDeepLink(rawUrl) {
     try {
       const url = new URL(rawUrl);
-      // textbridge://compose?to=+61412345678 — only action supported today.
+      // Routing targets (designed as Shortcut-friendly entrypoints):
+      //   textbridge://compose?to=X&body=Y   — open new-message overlay, phone prefilled
+      //   textbridge://search?q=X            — focus search bar with query prefilled
+      //   textbridge://conversation/<id>     — open a specific thread by ID
+      //   textbridge://open                  — bring window to front (no action)
       const action = (url.host || url.hostname || '').toLowerCase();
-      if (action === 'compose') {
-        openNewMsg({ to: url.searchParams.get('to') || '' });
+      switch (action) {
+        case 'compose':
+          openNewMsg({ to: url.searchParams.get('to') || '' });
+          break;
+        case 'search': {
+          const q = url.searchParams.get('q') || '';
+          if ($searchInput) {
+            $searchInput.value = q;
+            $searchInput.focus();
+            $searchInput.dispatchEvent(new Event('input'));
+          }
+          break;
+        }
+        case 'conversation': {
+          // Path-style: textbridge://conversation/<id>
+          const id = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+          if (id) {
+            pendingDeepLinkConversationID = id;
+            const existing = conversationByID(id);
+            if (existing) {
+              revealAndSelectConversation(existing);
+            } else {
+              loadConversations().catch(err => console.warn('textbridge: load after deep-link failed', err));
+            }
+          }
+          break;
+        }
+        case 'open':
+          // No-op beyond the OS-level focus that the deep-link event implies.
+          break;
+        default:
+          console.warn('textbridge: unknown deep-link action', action, rawUrl);
       }
     } catch (err) {
       console.warn('textbridge: invalid deep link', rawUrl, err);
