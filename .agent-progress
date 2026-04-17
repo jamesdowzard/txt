@@ -1,10 +1,10 @@
-# Agent Progress - tb-db-backups
+# Agent Progress - tb-mcp-tools
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:18:03Z
+# Created: 2026-04-17T01:20:43Z
 
-feature=tb-db-backups
-name=tb-db-backups
+feature=tb-mcp-tools
+name=tb-mcp-tools
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:18:03Z
+created=2026-04-17T01:20:43Z

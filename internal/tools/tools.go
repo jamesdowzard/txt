@@ -45,6 +45,10 @@ func Register(s *server.MCPServer, a *app.App) {
 		{"render_story", renderStoryTool, renderStoryHandler},
 		{"send_group_message", sendGroupMessageTool, sendGroupMessageHandler},
 		{"archive_conversation", archiveConversationTool, archiveConversationHandler},
+		{"summarize_conversation", summarizeConversationTool, summarizeConversationHandler},
+		{"find_unanswered", findUnansweredTool, findUnansweredHandler},
+		{"suggest_reply", suggestReplyTool, suggestReplyHandler},
+		{"extract_action_items", extractActionItemsTool, extractActionItemsHandler},
 	}
 
 	allow := selectedToolNames(os.Getenv("TEXTBRIDGE_MCP_TOOLS"))
