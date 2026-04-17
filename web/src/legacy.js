@@ -403,6 +403,36 @@
     }
   }
 
+  async function exportConversation(conv, format) {
+    if (!conv || !conv.ConversationID) return;
+    try {
+      const url = `/api/conversations/${encodeURIComponent(conv.ConversationID)}/export?format=${encodeURIComponent(format)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Export failed: ${body || resp.status}`);
+        return;
+      }
+      // Re-use the Content-Disposition filename the backend set.
+      const disp = resp.headers.get('content-disposition') || '';
+      const match = disp.match(/filename="?([^";]+)"?/i);
+      const filename = match ? match[1] : `textbridge-export.${format}`;
+      const blob = await resp.blob();
+      const objectURL = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectURL;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke on the next tick so the browser has finished reading.
+      setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+      showThreadFeedback(`Exported ${filename}`);
+    } catch (err) {
+      showThreadFeedback(`Export failed: ${err.message || err}`);
+    }
+  }
+
   async function deleteConversation(conv) {
     if (!conv || !conv.ConversationID) return;
     const name = (conv.Name || '').trim() || 'this conversation';
@@ -2062,6 +2092,10 @@
         meta: number,
       });
     }
+    items.push({ type: 'divider' });
+    items.push({ label: 'Export as JSON', action: 'export:json' });
+    items.push({ label: 'Export as CSV', action: 'export:csv' });
+    items.push({ label: 'Export as Markdown', action: 'export:md' });
     items.push({ type: 'divider' });
     items.push({
       label: 'Delete conversation…',
@@ -4589,6 +4623,11 @@
           }
           if (action === 'delete-conversation') {
             await deleteConversation(context.conversation);
+            return;
+          }
+          if (action.startsWith('export:')) {
+            const format = action.slice('export:'.length);
+            await exportConversation(context.conversation, format);
             return;
           }
           if (action === 'rename-conversation') {

@@ -527,6 +527,39 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			writeJSON(w, convo)
 			return
 		}
+		if action == "export" {
+			if r.Method != http.MethodGet {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			format := strings.ToLower(r.URL.Query().Get("format"))
+			if format == "" {
+				format = "json"
+			}
+			convo, err := store.GetConversation(convID)
+			if err != nil {
+				httpError(w, "get conversation: "+err.Error(), 500)
+				return
+			}
+			if convo == nil {
+				httpError(w, "conversation not found", 404)
+				return
+			}
+			// 100k is a soft cap — enough for every realistic thread.
+			msgs, err := store.GetMessagesByConversation(convID, 100000)
+			if err != nil {
+				httpError(w, "load messages: "+err.Error(), 500)
+				return
+			}
+			// Store returns newest-first; export reads top-to-bottom chronologically.
+			for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+				msgs[i], msgs[j] = msgs[j], msgs[i]
+			}
+			if err := writeConversationExport(w, format, convo, msgs); err != nil {
+				httpError(w, err.Error(), 400)
+			}
+			return
+		}
 		if action == "nickname" {
 			if r.Method != http.MethodPost && r.Method != http.MethodPatch {
 				httpError(w, "method not allowed", 405)
