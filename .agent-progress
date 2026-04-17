@@ -1,10 +1,10 @@
-# Agent Progress - tb-cmd-k-palette
+# Agent Progress - tb-release-script-fix
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-16T23:11:13Z
+# Created: 2026-04-17T00:19:40Z
 
-feature=tb-cmd-k-palette
-name=tb-cmd-k-palette
+feature=tb-release-script-fix
+name=tb-release-script-fix
 status=pending
 step=0
 step_name=Not started
-created=2026-04-16T23:11:13Z
+created=2026-04-17T00:19:40Z

@@ -109,6 +109,12 @@ xcrun notarytool store-credentials Textbridge \
 
 Override profile name with `NOTARY_KEYCHAIN_PROFILE=other`. Skip entirely with `SKIP_NOTARIZE=1` for fast dev iterations. Verify after release with `spctl -a -vv /Applications/Textbridge.app` — expect `accepted, source=Notarized Developer ID`.
 
+## Version-bump commit
+
+The harness pre-commit hook blocks direct commits to `main` / `develop`. When `./scripts/release` is invoked on a protected branch it auto-opens a `release/v<NEW_VERSION>` branch, commits the `tauri.conf.json` bump there, pushes, and `gh pr merge --admin --squash --delete-branch` routes it back to `main`. The script then pulls the squash-merge and tags `v<NEW_VERSION>` locally + remotely. Requires `gh` authenticated as `jamesdowzard`.
+
+Run from a feature branch instead and the script commits + pushes to that branch (no PR), assuming the caller owns the merge.
+
 ## Adding Rust commands
 
 ```rust
