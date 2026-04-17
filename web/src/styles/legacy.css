@@ -4049,3 +4049,20 @@ body::after {
 .platform-tab[data-platform="signal"] {
   display: none !important;
 }
+
+/* Detached-window mode (P2 #22) — spawned via ?mode=detached&conversation=<id>.
+   Hide the sidebar entirely and collapse the grid to a single column so the
+   chat pane fills the window. */
+body.detached-mode .app {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+body.detached-mode #sidebar,
+body.detached-mode .sidebar,
+body.detached-mode .sidebar-folder-tabs {
+  display: none !important;
+}
+body.detached-mode #chat-pane,
+body.detached-mode .chat-pane {
+  width: 100% !important;
+  max-width: 100%;
+}

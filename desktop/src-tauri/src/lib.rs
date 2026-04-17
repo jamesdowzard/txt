@@ -4,6 +4,7 @@ mod sse;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -18,6 +19,7 @@ use tauri_plugin_single_instance;
 // Tauri event name used to deliver `textbridge://…` URLs to the WebView.
 // Matches the subscriber wired in web/src/legacy.js.
 const DEEP_LINK_EVENT: &str = "textbridge://deep-link";
+const COMPOSE_HOTKEY_EVENT: &str = "textbridge://focus-compose";
 const BACKEND_ORIGIN: &str = "http://127.0.0.1:7007";
 const BUNDLE_ID: &str = "ai.james-is-an.textbridge";
 
@@ -29,7 +31,23 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_deep_link::init());
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed
+                        && shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::KeyT)
+                    {
+                        if let Some(main) = app.get_webview_window("main") {
+                            let _ = main.show();
+                            let _ = main.unminimize();
+                            let _ = main.set_focus();
+                        }
+                        let _ = app.emit_to("main", COMPOSE_HOTKEY_EVENT, ());
+                    }
+                })
+                .build(),
+        );
 
     // On Linux/Windows the OS re-launches the app with the URL as argv[1];
     // on macOS it fires the NSAppDelegate URL event which the deep-link
@@ -95,6 +113,13 @@ pub fn run() {
                 }
             });
 
+            // Global compose hotkey (P3 #32). ⌥⇧T focuses the main window and
+            // emits `textbridge://focus-compose` for the WebView to handle.
+            let shortcut = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyT);
+            if let Err(err) = app.global_shortcut().register(shortcut) {
+                eprintln!("[global-shortcut] failed to register compose hotkey: {err}");
+            }
+
             // Native-notifications pipeline (P1 #9). Registers the bundle
             // with NSUserNotificationCenter and spawns a background SSE
             // subscriber that shows a notification per inbound message with
@@ -120,6 +145,7 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![open_conversation_window])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -131,6 +157,53 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// Open (or focus) a detached window showing a single conversation (P2 #22).
+///
+/// Labels are derived from the conversation ID with non-alphanumerics stripped
+/// so Tauri's window-label validator accepts them. If a detached window for the
+/// same conversation already exists, we show/unminimize/focus it instead of
+/// spawning a duplicate.
+#[tauri::command]
+fn open_conversation_window(
+    app: tauri::AppHandle,
+    conversation_id: String,
+) -> Result<(), String> {
+    let label = format!(
+        "detached-{}",
+        conversation_id
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+
+    if let Some(existing) = app.get_webview_window(&label) {
+        existing.show().map_err(|e| e.to_string())?;
+        existing.unminimize().map_err(|e| e.to_string())?;
+        existing.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let url = format!(
+        "{}/?mode=detached&conversation={}",
+        BACKEND_ORIGIN,
+        urlencoding::encode(&conversation_id),
+    );
+
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::External(url.parse().map_err(|e: url::ParseError| e.to_string())?),
+    )
+    .title("Textbridge — Conversation")
+    .inner_size(640.0, 760.0)
+    .min_inner_size(480.0, 500.0)
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 /// Check the configured updater endpoint for a newer release. If one is

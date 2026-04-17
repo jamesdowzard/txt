@@ -22,6 +22,39 @@
     { id: FOLDER_SPAM, label: 'Spam' },
   ];
   let activeConvoId = null;
+  // Detached window mode (P2 #22). When the WebView is loaded with
+  // ?mode=detached&conversation=<id>, we hide the sidebar and auto-select the
+  // given conversation so the window shows only that thread.
+  const urlParams = new URLSearchParams(window.location.search);
+  const DETACHED_MODE = urlParams.get('mode') === 'detached';
+  const DETACHED_CONVO = urlParams.get('conversation') || '';
+  if (DETACHED_MODE) {
+    document.body.classList.add('detached-mode');
+  }
+  const LAST_CONVO_KEY = 'textbridge:last-convo-id';
+  function persistLastConvoId(id) {
+    try {
+      if (id) localStorage.setItem(LAST_CONVO_KEY, id);
+      else localStorage.removeItem(LAST_CONVO_KEY);
+    } catch (err) {
+      // Private-mode / storage-disabled — feature is best-effort.
+    }
+  }
+  function restoreLastConversation() {
+    let saved = '';
+    try {
+      saved = localStorage.getItem(LAST_CONVO_KEY) || '';
+    } catch (err) {
+      return;
+    }
+    if (!saved) return;
+    const match = conversationByID(saved);
+    if (match) {
+      revealAndSelectConversation(match);
+    }
+    // If not found, leave the key alone — the conversation may appear on
+    // a later load (e.g. pagination). Don't clear.
+  }
   let conversations = [];
   let allConversations = [];
   let activeConversation = null;
@@ -2220,6 +2253,9 @@
     }
     items.push({ type: 'divider' });
     items.push({ label: 'Jump to date…', action: 'jump-to-date' });
+    if (window.__TAURI__) {
+      items.push({ label: 'Open in new window', action: 'detach-conversation' });
+    }
     items.push({ type: 'divider' });
     items.push({ label: 'Export as JSON', action: 'export:json' });
     items.push({ label: 'Export as CSV', action: 'export:csv' });
@@ -2604,6 +2640,7 @@
       }
     }
     activeConvoId = convo.ConversationID;
+    if (!DETACHED_MODE) persistLastConvoId(activeConvoId);
     activeConversation = convo;
     pendingDeepLinkConversationID = '';
     syncConversationURL(convo.ConversationID);
@@ -4776,6 +4813,10 @@
             promptForDateAndJump(context.conversation);
             return;
           }
+          if (action === 'detach-conversation') {
+            await openDetachedConversationWindow(context.conversation);
+            return;
+          }
           if (action === 'unify-thread:on') {
             await enableUnifiedThread(context.conversation);
             return;
@@ -4942,6 +4983,7 @@
     activeConvoId = null;
     activeConvoIsGroup = false;
     activeConversation = null;
+    if (!DETACHED_MODE) persistLastConvoId('');
     syncConversationURL('');
     activeProtocolDetail = '';
     clearTimeout(threadRefreshTimer);
@@ -5189,10 +5231,37 @@
     }
   }
 
+  async function openDetachedConversationWindow(convo) {
+    if (!convo || !convo.ConversationID) return;
+    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') return;
+    try {
+      await window.__TAURI__.core.invoke('open_conversation_window', {
+        conversationId: convo.ConversationID,
+      });
+    } catch (err) {
+      console.warn('textbridge: open_conversation_window failed', err);
+    }
+  }
+
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event
       .listen('textbridge://deep-link', ({ payload }) => handleDeepLink(payload))
       .catch(err => console.warn('textbridge: deep-link listen failed', err));
+  }
+
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    window.__TAURI__.event
+      .listen('textbridge://focus-compose', () => {
+        if (activeConvoId) {
+          const $compose = document.querySelector('#compose-input');
+          if ($compose) {
+            $compose.focus();
+            return;
+          }
+        }
+        openNewMsg({ to: '', body: '' });
+      })
+      .catch(err => console.warn('textbridge: focus-compose listen failed', err));
   }
 
   function closeNewMsg() {
@@ -5337,7 +5406,14 @@
   renderEmptyState();
   renderFolderTabs();
   startEventStream();
-  loadConversations();
+  loadConversations().then(() => {
+    if (DETACHED_MODE && DETACHED_CONVO) {
+      const match = conversationByID(DETACHED_CONVO);
+      if (match) revealAndSelectConversation(match);
+    } else if (!pendingDeepLinkConversationID && !activeConvoId) {
+      restoreLastConversation();
+    }
+  });
   checkStatus();
 
   // ─── Command palette (⌘K) ───
@@ -5417,6 +5493,14 @@
         icon: '📅',
         run: () => { closeCommandPalette(); promptForDateAndJump(convo); },
       });
+      if (window.__TAURI__ && !DETACHED_MODE) {
+        items.push({
+          type: 'action',
+          label: `Open "${conversationDisplayName(convo) || 'conversation'}" in new window`,
+          icon: '⧉',
+          run: () => { closeCommandPalette(); openDetachedConversationWindow(convo); },
+        });
+      }
     }
     return items;
   }

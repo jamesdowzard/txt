@@ -22,6 +22,7 @@ tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -35,6 +36,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
+# URL building for detached conversation windows (P2 #22).
+urlencoding = "2"
+url = "2"
 
 [profile.release]
 strip = "debuginfo"
