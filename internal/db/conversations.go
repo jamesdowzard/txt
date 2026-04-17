@@ -192,6 +192,11 @@ func (s *Store) DeleteConversation(id string) error {
 	if _, err := tx.Exec(`DELETE FROM drafts WHERE conversation_id = ?`, id); err != nil {
 		return err
 	}
+	// Best-effort: outbox exists only on DBs migrated through outbox.go. Swallow
+	// a 'no such table' so this call remains a no-op on older DBs.
+	if _, err := tx.Exec(`DELETE FROM outbox WHERE conversation_id = ?`, id); err != nil && !strings.Contains(err.Error(), "no such table") {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM conversations WHERE conversation_id = ?`, id); err != nil {
 		return err
 	}

@@ -338,6 +338,40 @@
     return `<svg viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-2-7-2-2V4H9v4L7 10l-2 7z"/></svg>`;
   }
 
+  async function deleteConversation(conv) {
+    if (!conv || !conv.ConversationID) return;
+    const name = (conv.Name || '').trim() || 'this conversation';
+    // window.confirm works in WKWebView. A bespoke modal is overkill for a
+    // single destructive action; the server RPC is irreversible either way.
+    const ok = window.confirm(
+      `Delete "${name}" from Textbridge AND Google Messages?\n\n` +
+      'This removes the thread and every message locally and on the Google Messages server. Irreversible.',
+    );
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Delete failed: ${body || resp.status}`);
+        return;
+      }
+      if (activeConvoId === conv.ConversationID) {
+        activeConvoId = null;
+        activeConversation = null;
+        $chatHeader.style.display = 'none';
+        $messagesArea.style.display = 'none';
+        $composeBar.style.display = 'none';
+        $emptyState.style.display = 'flex';
+      }
+      await loadConversations();
+      showThreadFeedback('Conversation deleted.');
+    } catch (err) {
+      showThreadFeedback(`Delete failed: ${err.message || err}`);
+    }
+  }
+
   async function pinConversation(conv, pin) {
     if (!conv || !conv.ConversationID) return;
     const action = pin ? 'pin' : 'unpin';
@@ -1947,6 +1981,12 @@
         meta: number,
       });
     }
+    items.push({ type: 'divider' });
+    items.push({
+      label: 'Delete conversation…',
+      action: 'delete-conversation',
+      danger: true,
+    });
     return items;
   }
 
@@ -4411,6 +4451,10 @@
               await copyTextToClipboard(identity.number);
               showThreadFeedback('Phone number copied.');
             }
+            return;
+          }
+          if (action === 'delete-conversation') {
+            await deleteConversation(context.conversation);
             return;
           }
           if (action === 'rename-conversation') {

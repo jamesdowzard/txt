@@ -414,6 +414,30 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 
 	mux.HandleFunc("/api/conversations/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+		// DELETE /api/conversations/:id  — no trailing action segment.
+		if r.Method == http.MethodDelete {
+			convID := path
+			if strings.TrimSpace(convID) == "" {
+				httpError(w, "missing conversation id", 400)
+				return
+			}
+			cli := getClient()
+			if cli == nil {
+				httpError(w, app.ErrNotConnected, 503)
+				return
+			}
+			if err := cli.DeleteConversation(convID); err != nil {
+				httpError(w, "libgm delete: "+err.Error(), 502)
+				return
+			}
+			if err := store.DeleteConversation(convID); err != nil {
+				httpError(w, "delete conversation: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		parts := strings.Split(path, "/")
 		if len(parts) < 2 {
 			httpError(w, "not found", 404)

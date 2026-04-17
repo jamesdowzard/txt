@@ -1,10 +1,10 @@
-# Agent Progress - tb-nicknames
+# Agent Progress - tb-delete-conv
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:07:04Z
+# Created: 2026-04-17T01:15:16Z
 
-feature=tb-nicknames
-name=tb-nicknames
+feature=tb-delete-conv
+name=tb-delete-conv
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:07:04Z
+created=2026-04-17T01:15:16Z
