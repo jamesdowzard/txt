@@ -322,6 +322,12 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 	defer cancelOutbox()
 	a.StartOutboxDispatcher(outboxCtx)
 
+	// Daily SQLite snapshot into <DataDir>/backups/. Runs one immediately
+	// if today's backup is missing, then every 24h. See internal/app/backup.go.
+	backupCtx, cancelBackup := context.WithCancel(context.Background())
+	defer cancelBackup()
+	a.StartBackupScheduler(backupCtx)
+
 	// Block until signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

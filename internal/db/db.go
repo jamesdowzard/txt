@@ -94,6 +94,15 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// BackupTo writes a consistent copy of the database to `path` using
+// SQLite's VACUUM INTO. The target must not exist. Safe to call while
+// the app is serving; VACUUM INTO holds a brief shared lock and produces
+// a fully-portable .db file with no WAL tail.
+func (s *Store) BackupTo(path string) error {
+	_, err := s.db.Exec(`VACUUM INTO ?`, path)
+	return err
+}
+
 // SeedDemo populates the database with fake data for screenshots/demos.
 func (s *Store) SeedDemo() error {
 	inserts := `
