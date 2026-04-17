@@ -209,6 +209,14 @@ func (s *Store) MarkConversationRead(id string) error {
 	return err
 }
 
+// MarkConversationUnread sets unread_count to at least 1 so the sidebar badge
+// reappears. No upstream sync — this is local presentation only, since
+// Google Messages itself has no "mark unread" concept.
+func (s *Store) MarkConversationUnread(id string) error {
+	_, err := s.db.Exec(`UPDATE conversations SET unread_count = MAX(unread_count, 1) WHERE conversation_id = ?`, id)
+	return err
+}
+
 func (s *Store) SetConversationNotificationMode(id, mode string) error {
 	normalized, err := parseNotificationMode(mode)
 	if err != nil {

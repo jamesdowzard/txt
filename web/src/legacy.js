@@ -338,6 +338,26 @@
     return `<svg viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-2-7-2-2V4H9v4L7 10l-2 7z"/></svg>`;
   }
 
+  async function setConversationReadState(conv, read) {
+    if (!conv || !conv.ConversationID) return;
+    const endpoint = read ? '/api/mark-read' : '/api/mark-unread';
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conv.ConversationID }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Failed: ${body || resp.status}`);
+        return;
+      }
+      await loadConversations();
+    } catch (err) {
+      showThreadFeedback(`Failed: ${err.message || err}`);
+    }
+  }
+
   async function deleteConversation(conv) {
     if (!conv || !conv.ConversationID) return;
     const name = (conv.Name || '').trim() || 'this conversation';
@@ -1956,6 +1976,10 @@
     }
     items.push(
       { type: 'divider' },
+      {
+        label: (convo.UnreadCount || 0) > 0 ? 'Mark as read' : 'Mark as unread',
+        action: (convo.UnreadCount || 0) > 0 ? 'mark-read' : 'mark-unread',
+      },
       {
         label: convo.Nickname ? 'Rename (local)…' : 'Set nickname (local)…',
         action: 'rename-conversation',
@@ -4463,6 +4487,10 @@
           }
           if (action === 'clear-nickname') {
             await saveConversationNickname(context.conversation, '');
+            return;
+          }
+          if (action === 'mark-read' || action === 'mark-unread') {
+            await setConversationReadState(context.conversation, action === 'mark-read');
             return;
           }
           if (action.startsWith('notification:')) {

@@ -1191,6 +1191,30 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
+	mux.HandleFunc("/api/mark-unread", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "method not allowed", 405)
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if req.ConversationID == "" {
+			httpError(w, "conversation_id is required", 400)
+			return
+		}
+		if err := store.MarkConversationUnread(req.ConversationID); err != nil {
+			httpError(w, "mark unread: "+err.Error(), 500)
+			return
+		}
+		publishConversations()
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
 	mux.HandleFunc("/api/drafts", func(w http.ResponseWriter, r *http.Request) {
 		conversationID := r.URL.Query().Get("conversation_id")
 		if conversationID == "" {

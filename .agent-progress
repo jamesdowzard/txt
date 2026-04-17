@@ -1,10 +1,10 @@
-# Agent Progress - tb-mcp-tools
+# Agent Progress - tb-mark-unread
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:20:43Z
+# Created: 2026-04-17T01:28:18Z
 
-feature=tb-mcp-tools
-name=tb-mcp-tools
+feature=tb-mark-unread
+name=tb-mark-unread
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:20:43Z
+created=2026-04-17T01:28:18Z
