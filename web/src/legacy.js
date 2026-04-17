@@ -3576,9 +3576,55 @@
   let searchTimeout;
   let searchRequestID = 0;
 
-  async function renderSearchResults(query) {
+  // parseSearchQuery splits filter tokens (key:value) out of the raw query.
+  // Supported: from:me / from:them, platform:sms|gchat|…, has:media,
+  // after:YYYY-MM-DD, before:YYYY-MM-DD. Unknown tokens stay in the text query.
+  function parseSearchQuery(raw) {
+    const tokens = raw.trim().split(/\s+/).filter(Boolean);
+    const filters = {};
+    const rest = [];
+    for (const t of tokens) {
+      const m = t.match(/^(from|platform|has|after|before):(.+)$/i);
+      if (!m) {
+        rest.push(t);
+        continue;
+      }
+      const key = m[1].toLowerCase();
+      const val = m[2];
+      switch (key) {
+        case 'from':
+          if (val.toLowerCase() === 'me') filters.from_me = '1';
+          else if (val.toLowerCase() === 'them' || val.toLowerCase() === 'others') filters.from_me = '0';
+          else rest.push(t);
+          break;
+        case 'platform':
+          filters.platform = val.toLowerCase();
+          break;
+        case 'has':
+          if (val.toLowerCase() === 'media') filters.has_media = '1';
+          else rest.push(t);
+          break;
+        case 'after':
+          filters.after = val;
+          break;
+        case 'before':
+          filters.before = val;
+          break;
+        default:
+          rest.push(t);
+      }
+    }
+    return { q: rest.join(' '), filters };
+  }
+
+  async function renderSearchResults(rawQuery) {
     const requestID = ++searchRequestID;
-    const results = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}&limit=30`);
+    const { q, filters } = parseSearchQuery(rawQuery);
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    for (const [k, v] of Object.entries(filters)) params.set(k, v);
+    params.set('limit', '30');
+    const results = await fetchJSON(`/api/search?${params.toString()}`);
     if (requestID !== searchRequestID) return;
     const searchConvos = results.map(result => ({
       ConversationID: result.ConversationID,
@@ -3594,15 +3640,22 @@
 
   $searchInput.addEventListener('input', () => {
     clearTimeout(searchTimeout);
-    const q = $searchInput.value.trim();
-    if (!q) {
+    const raw = $searchInput.value.trim();
+    if (!raw) {
+      searchRequestID++;
+      loadConversations();
+      return;
+    }
+    // Only kick off a search if there's either a non-filter term or a filter.
+    const parsed = parseSearchQuery(raw);
+    if (!parsed.q && Object.keys(parsed.filters).length === 0) {
       searchRequestID++;
       loadConversations();
       return;
     }
     searchTimeout = setTimeout(async () => {
       try {
-        await renderSearchResults(q);
+        await renderSearchResults(raw);
       } catch (err) {
         console.error('Search failed:', err);
       }

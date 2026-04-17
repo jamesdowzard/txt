@@ -1,10 +1,10 @@
-# Agent Progress - tb-snooze
+# Agent Progress - tb-search-filters
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:31:01Z
+# Created: 2026-04-17T01:35:23Z
 
-feature=tb-snooze
-name=tb-snooze
+feature=tb-search-filters
+name=tb-search-filters
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:31:01Z
+created=2026-04-17T01:35:23Z

@@ -626,20 +626,55 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		if q == "" {
-			httpError(w, "query parameter 'q' is required", 400)
-			return
-		}
 		limit := queryInt(r, "limit", 50)
-		msgs, err := store.SearchMessages(q, "", limit)
+		filters := db.SearchFilters{
+			PhoneNumber:    r.URL.Query().Get("phone_number"),
+			SourcePlatform: r.URL.Query().Get("platform"),
+		}
+		if after := r.URL.Query().Get("after"); after != "" {
+			if ms, ok := parseSearchDate(after); ok {
+				filters.AfterMS = ms
+			} else {
+				httpError(w, "invalid 'after' (expect YYYY-MM-DD or unix millis)", 400)
+				return
+			}
+		}
+		if before := r.URL.Query().Get("before"); before != "" {
+			if ms, ok := parseSearchDate(before); ok {
+				// End-of-day for ISO dates so "before=2026-02-01" includes all of Feb 1.
+				filters.BeforeMS = ms + (24*time.Hour - time.Millisecond).Milliseconds()
+			} else {
+				httpError(w, "invalid 'before' (expect YYYY-MM-DD or unix millis)", 400)
+				return
+			}
+		}
+		if has := r.URL.Query().Get("has_media"); has != "" {
+			v := has == "1" || strings.EqualFold(has, "true")
+			filters.HasMedia = &v
+		}
+		if fm := r.URL.Query().Get("from_me"); fm != "" {
+			v := fm == "1" || strings.EqualFold(fm, "true")
+			filters.FromMe = &v
+		}
+		anyFilter := filters.PhoneNumber != "" || filters.SourcePlatform != "" ||
+			filters.AfterMS > 0 || filters.BeforeMS > 0 ||
+			filters.HasMedia != nil || filters.FromMe != nil
+		if q == "" && !anyFilter {
+			httpError(w, "query parameter 'q' or at least one filter is required", 400)
+			return
+		}
+		msgs, err := store.SearchMessagesFiltered(q, filters, limit)
 		if err != nil {
 			httpError(w, "search: "+err.Error(), 500)
 			return
 		}
-		convos, err := store.SearchConversationsByMetadata(q, limit)
-		if err != nil {
-			httpError(w, "search: "+err.Error(), 500)
-			return
+		var convos []*db.Conversation
+		if q != "" {
+			convos, err = store.SearchConversationsByMetadata(q, limit)
+			if err != nil {
+				httpError(w, "search: "+err.Error(), 500)
+				return
+			}
 		}
 		results := mergeSearchResults(store, msgs, convos, limit)
 		writeJSON(w, results)
@@ -1922,4 +1957,22 @@ func queryInt64(r *http.Request, key string, defaultVal int64) int64 {
 		return defaultVal
 	}
 	return n
+}
+
+// parseSearchDate accepts either an ISO-8601 day (YYYY-MM-DD) interpreted in
+// UTC (start of day) or a raw unix-millis integer. Returns (ms, true) on
+// success. Bare unix millis are handy for the frontend which already holds
+// Date.getTime() values; ISO form is handy for humans typing curl.
+func parseSearchDate(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UnixMilli(), true
+	}
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 0 {
+		return ms, true
+	}
+	return 0, false
 }

@@ -178,27 +178,74 @@ func (s *Store) GetMessages(phoneNumber string, afterMS, beforeMS int64, limit i
 	return scanMessages(rows)
 }
 
+// SearchFilters narrows a message search. Zero-value fields are ignored so
+// callers can build up filters incrementally without a builder pattern.
+type SearchFilters struct {
+	PhoneNumber    string // legacy; sender_number exact match
+	AfterMS        int64  // inclusive; milliseconds since epoch
+	BeforeMS       int64  // inclusive; milliseconds since epoch
+	SourcePlatform string // "sms", "gchat", "imessage", "whatsapp", "signal", "telegram"
+	HasMedia       *bool  // pointer so callers can distinguish "not set" from false
+	FromMe         *bool  // pointer so callers can distinguish "not set" from false
+}
+
 func (s *Store) SearchMessages(query, phoneNumber string, limit int) ([]*Message, error) {
-	if s.ftsEnabled {
-		msgs, err := s.searchMessagesFTS(query, phoneNumber, limit)
+	return s.SearchMessagesFiltered(query, SearchFilters{PhoneNumber: phoneNumber}, limit)
+}
+
+// SearchMessagesFiltered is the modern search entrypoint. Empty query with a
+// non-empty filter is allowed — useful for "show me every photo I sent since
+// April" style queries. FTS is preferred when available; falls back to LIKE
+// when FTS returns nothing or the query is empty (FTS can't match empty).
+func (s *Store) SearchMessagesFiltered(query string, f SearchFilters, limit int) ([]*Message, error) {
+	q := strings.TrimSpace(query)
+	if s.ftsEnabled && q != "" {
+		msgs, err := s.searchMessagesFTS(q, f, limit)
 		if err == nil && len(msgs) > 0 {
 			return msgs, nil
 		}
 	}
-	return s.searchMessagesLike(query, phoneNumber, limit)
+	return s.searchMessagesLike(q, f, limit)
 }
 
-func (s *Store) searchMessagesFTS(query, phoneNumber string, limit int) ([]*Message, error) {
+func appendFilterConditions(f SearchFilters, columnPrefix string, conditions *[]string, args *[]any) {
+	if f.PhoneNumber != "" {
+		*conditions = append(*conditions, columnPrefix+"sender_number = ?")
+		*args = append(*args, f.PhoneNumber)
+	}
+	if f.AfterMS > 0 {
+		*conditions = append(*conditions, columnPrefix+"timestamp_ms >= ?")
+		*args = append(*args, f.AfterMS)
+	}
+	if f.BeforeMS > 0 {
+		*conditions = append(*conditions, columnPrefix+"timestamp_ms <= ?")
+		*args = append(*args, f.BeforeMS)
+	}
+	if f.SourcePlatform != "" {
+		*conditions = append(*conditions, columnPrefix+"source_platform = ?")
+		*args = append(*args, f.SourcePlatform)
+	}
+	if f.HasMedia != nil {
+		if *f.HasMedia {
+			*conditions = append(*conditions, columnPrefix+"media_id != ''")
+		} else {
+			*conditions = append(*conditions, columnPrefix+"media_id = ''")
+		}
+	}
+	if f.FromMe != nil {
+		*conditions = append(*conditions, columnPrefix+"is_from_me = ?")
+		*args = append(*args, *f.FromMe)
+	}
+}
+
+func (s *Store) searchMessagesFTS(query string, f SearchFilters, limit int) ([]*Message, error) {
 	var conditions []string
 	var args []any
 
 	conditions = append(conditions, "f.body MATCH ?")
 	args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`)
 
-	if phoneNumber != "" {
-		conditions = append(conditions, "m.sender_number = ?")
-		args = append(args, phoneNumber)
-	}
+	appendFilterConditions(f, "m.", &conditions, &args)
 	args = append(args, limit)
 
 	q := `SELECT m.` + messageColumns + `
@@ -216,17 +263,15 @@ func (s *Store) searchMessagesFTS(query, phoneNumber string, limit int) ([]*Mess
 	return scanMessages(rows)
 }
 
-func (s *Store) searchMessagesLike(query, phoneNumber string, limit int) ([]*Message, error) {
+func (s *Store) searchMessagesLike(query string, f SearchFilters, limit int) ([]*Message, error) {
 	var conditions []string
 	var args []any
 
-	conditions = append(conditions, "body LIKE ?")
-	args = append(args, "%"+query+"%")
-
-	if phoneNumber != "" {
-		conditions = append(conditions, "sender_number = ?")
-		args = append(args, phoneNumber)
+	if query != "" {
+		conditions = append(conditions, "body LIKE ?")
+		args = append(args, "%"+query+"%")
 	}
+	appendFilterConditions(f, "", &conditions, &args)
 
 	q := `SELECT ` + messageColumns + ` FROM messages`
 	if len(conditions) > 0 {
