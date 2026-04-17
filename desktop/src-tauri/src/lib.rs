@@ -1,5 +1,6 @@
 use std::sync::Mutex;
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -11,6 +12,10 @@ use tauri_plugin_updater::UpdaterExt;
 #[cfg(feature = "single-instance")]
 use tauri_plugin_single_instance;
 
+// Tauri event name used to deliver `textbridge://…` URLs to the WebView.
+// Matches the subscriber wired in web/src/legacy.js.
+const DEEP_LINK_EVENT: &str = "textbridge://deep-link";
+
 struct BackendChild(Mutex<Option<CommandChild>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,10 +23,22 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init());
 
+    // On Linux/Windows the OS re-launches the app with the URL as argv[1];
+    // on macOS it fires the NSAppDelegate URL event which the deep-link
+    // plugin already handles. Forward any URL-shaped argv entry to the
+    // running instance so the behaviour is consistent across platforms.
     #[cfg(feature = "single-instance")]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if let Some(url) = args.iter().find(|a| a.starts_with("textbridge://")) {
+            let _ = app.emit(DEEP_LINK_EVENT, url.clone());
+        }
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_focus();
+        }
+    }));
 
     builder
         .manage(BackendChild(Mutex::new(None)))
@@ -58,6 +75,15 @@ pub fn run() {
                         CommandEvent::Terminated(_) => break,
                         _ => {}
                     }
+                }
+            });
+
+            // Forward textbridge://… URLs to the WebView. Fires on every
+            // macOS NSAppDelegate "open URLs" event (cold launch + hot).
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let _ = deep_link_handle.emit(DEEP_LINK_EVENT, url.to_string());
                 }
             });
 

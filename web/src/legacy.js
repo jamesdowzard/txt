@@ -4645,9 +4645,10 @@
     }, '', 1);
   }
 
-  function openNewMsg() {
+  function openNewMsg(opts = {}) {
+    const prefillTo = typeof opts.to === 'string' ? opts.to : '';
     $newMsgOverlay.classList.add('show');
-    $newMsgPhone.value = '';
+    $newMsgPhone.value = prefillTo;
     $newMsgError.style.display = 'none';
     $newMsgGo.disabled = false;
     $newMsgGo.textContent = 'Start conversation';
@@ -4655,6 +4656,25 @@
     $newMsgRoutes.classList.remove('active');
     $newMsgRoutes.innerHTML = '';
     setTimeout(() => $newMsgPhone.focus(), 100);
+  }
+
+  function handleDeepLink(rawUrl) {
+    try {
+      const url = new URL(rawUrl);
+      // textbridge://compose?to=+61412345678 — only action supported today.
+      const action = (url.host || url.hostname || '').toLowerCase();
+      if (action === 'compose') {
+        openNewMsg({ to: url.searchParams.get('to') || '' });
+      }
+    } catch (err) {
+      console.warn('textbridge: invalid deep link', rawUrl, err);
+    }
+  }
+
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    window.__TAURI__.event
+      .listen('textbridge://deep-link', ({ payload }) => handleDeepLink(payload))
+      .catch(err => console.warn('textbridge: deep-link listen failed', err));
   }
 
   function closeNewMsg() {

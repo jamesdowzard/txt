@@ -51,6 +51,11 @@
       "endpoints": [
         "https://github.com/jamesdowzard/textbridge/releases/latest/download/latest.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["textbridge"]
+      }
     }
   }
 }
