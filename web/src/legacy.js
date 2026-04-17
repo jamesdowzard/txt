@@ -363,6 +363,61 @@
     }
   }
 
+  // User-visible display name. Uses the user-set nickname when present so
+  // renames show up everywhere the conversation is listed (sidebar, chat
+  // header, notifications, search). Upstream participant/contact names are
+  // never overwritten — nickname is local-only.
+  function conversationDisplayName(conv) {
+    if (!conv) return '';
+    const nick = (conv.Nickname || '').trim();
+    if (nick) return nick;
+    return String(conv.Name || '').trim();
+  }
+
+  async function saveConversationNickname(conv, nickname) {
+    if (!conv || !conv.ConversationID) return;
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/nickname`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Rename failed: ${body || resp.status}`);
+        return;
+      }
+      const updated = await resp.json();
+      if (activeConvoId === conv.ConversationID) {
+        activeConversation = updated;
+        refreshConversationChrome();
+        if (typeof $chatHeaderName !== 'undefined' && $chatHeaderName) {
+          $chatHeaderName.textContent = conversationDisplayName(updated) || 'Unknown';
+        }
+      }
+      await loadConversations();
+      showThreadFeedback(nickname.trim() ? 'Nickname saved.' : 'Nickname cleared.');
+    } catch (err) {
+      showThreadFeedback(`Rename failed: ${err.message || err}`);
+    }
+  }
+
+  async function promptAndSetNickname(conv) {
+    if (!conv || !conv.ConversationID) return;
+    const current = (conv.Nickname || '').trim();
+    const fallback = String(conv.Name || '').trim();
+    // WKWebView + the Go-served origin supports window.prompt. Keep the UI
+    // lightweight — a full overlay is overkill for a single-line edit.
+    const next = window.prompt(
+      current
+        ? `New nickname for "${fallback}" (blank clears, local-only):`
+        : `Nickname for "${fallback}" (local-only — not shared with the other side):`,
+      current,
+    );
+    if (next === null) return;
+    await saveConversationNickname(conv, next);
+  }
+
   function archiveIconHTML() {
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`;
   }
@@ -1114,7 +1169,7 @@
           style: `background:${avatarColor(c.Name)}`,
         })}
         <div class="convo-meta">
-          <div class="convo-name">${escapeHtml(c.Name || 'Unknown')}</div>
+          <div class="convo-name">${escapeHtml(conversationDisplayName(c) || 'Unknown')}</div>
           <div class="convo-subline">
             ${notificationBadge}
             ${preview}
@@ -1664,7 +1719,7 @@
       const notificationMode = notificationModeOf(convo);
       if (notificationMode === NOTIFICATION_MODE_MUTED) return;
       if (notificationMode === NOTIFICATION_MODE_MENTIONS && !messageMentionsIdentity(latest)) return;
-      const title = (convo && convo.Name) || latest.SenderName || 'New message';
+      const title = (convo && conversationDisplayName(convo)) || latest.SenderName || 'New message';
       const body = latest.Body || (latest.MediaID ? 'Sent an attachment' : 'New message');
       const notification = new window.Notification(title, {
         body,
@@ -1863,6 +1918,19 @@
       items.push({
         label: 'Leave WhatsApp group',
         action: 'leave-whatsapp-group',
+      });
+    }
+    items.push(
+      { type: 'divider' },
+      {
+        label: convo.Nickname ? 'Rename (local)…' : 'Set nickname (local)…',
+        action: 'rename-conversation',
+      },
+    );
+    if (convo.Nickname) {
+      items.push({
+        label: 'Clear nickname',
+        action: 'clear-nickname',
       });
     }
     items.push(
@@ -2277,7 +2345,7 @@
       text: initials(convo.Name),
       background: avatarColor(convo.Name),
     });
-    $chatHeaderName.textContent = convo.Name || 'Unknown';
+    $chatHeaderName.textContent = conversationDisplayName(convo) || 'Unknown';
     activeConvoIsGroup = !!convo.IsGroup;
     activeProtocolDetail = '';
     refreshConversationChrome();
@@ -4345,6 +4413,14 @@
             }
             return;
           }
+          if (action === 'rename-conversation') {
+            await promptAndSetNickname(context.conversation);
+            return;
+          }
+          if (action === 'clear-nickname') {
+            await saveConversationNickname(context.conversation, '');
+            return;
+          }
           if (action.startsWith('notification:')) {
             const mode = action.split(':')[1] || NOTIFICATION_MODE_ALL;
             await setConversationNotificationMode(context.conversation, mode);
@@ -4903,7 +4979,7 @@
       if (score >= 0) results.push({ ...a, score });
     }
     for (const c of allConversations || []) {
-      const name = c.Name || 'Unknown';
+      const name = conversationDisplayName(c) || 'Unknown';
       const score = cmdkFuzzyScore(query, name);
       if (score >= 0) {
         results.push({

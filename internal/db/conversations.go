@@ -8,7 +8,7 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname`
 
 const (
 	NotificationModeAll      = "all"
@@ -109,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname)
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +253,15 @@ func (s *Store) SetConversationPinned(id string, pinned bool) error {
 	return err
 }
 
+// SetConversationNickname sets a local display name override. Empty nickname
+// clears the override and callers fall back to conversations.name.
+// The nickname is local-only — never synced upstream to libgm/Google Messages.
+func (s *Store) SetConversationNickname(id, nickname string) error {
+	trimmed := strings.TrimSpace(nickname)
+	_, err := s.db.Exec(`UPDATE conversations SET nickname = ? WHERE conversation_id = ?`, trimmed, id)
+	return err
+}
+
 // SetConversationFolder moves a conversation to `folder` (inbox/archive/spam).
 // Returns an error for unknown folder values.
 func (s *Store) SetConversationFolder(id, folder string) error {
@@ -365,7 +374,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -379,7 +388,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

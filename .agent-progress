@@ -1,10 +1,10 @@
-# Agent Progress - tb-updater-pubkey
+# Agent Progress - tb-nicknames
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T01:05:04Z
+# Created: 2026-04-17T01:07:04Z
 
-feature=tb-updater-pubkey
-name=tb-updater-pubkey
+feature=tb-nicknames
+name=tb-nicknames
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T01:05:04Z
+created=2026-04-17T01:07:04Z

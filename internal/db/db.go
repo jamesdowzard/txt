@@ -25,6 +25,7 @@ type Conversation struct {
 	MutedUntil       int64  `json:"muted_until,omitempty"` // unix seconds; 0 = until-forever when NotificationMode=muted. When >0 and now() > MutedUntil, mute auto-expires.
 	Folder           string `json:"folder,omitempty"` // inbox, archive, spam (see FolderInbox/Archive/Spam)
 	PinnedAt         int64  `json:"pinned_at,omitempty"` // unix seconds; 0 = not pinned. Sorts pinned > 0 above unpinned.
+	Nickname         string `json:"nickname,omitempty"` // user-set local display name; falls back to Name when empty.
 }
 
 type Message struct {
@@ -240,6 +241,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE conversations ADD COLUMN folder TEXT NOT NULL DEFAULT 'inbox'",
 		"ALTER TABLE conversations ADD COLUMN pinned_at INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE conversations ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE conversations ADD COLUMN nickname TEXT NOT NULL DEFAULT ''",
 	} {
 		s.db.Exec(col) // ignore "duplicate column" errors
 	}
