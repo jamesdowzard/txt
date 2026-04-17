@@ -41,6 +41,7 @@
   let notificationsEnabled = readNotificationPreference();
   let nativeNotificationState = null;
   let pendingDeepLinkConversationID = conversationIDFromURL();
+  let pendingComposeBody = '';
   let appStatus = { connected: false, google: {}, whatsapp: {}, signal: {}, backfill: {}, identity_name: '' };
   let googleStatus = {
     connected: false,
@@ -5114,6 +5115,7 @@
 
   function openNewMsg(opts = {}) {
     const prefillTo = typeof opts.to === 'string' ? opts.to : '';
+    pendingComposeBody = typeof opts.body === 'string' ? opts.body : '';
     $newMsgOverlay.classList.add('show');
     $newMsgPhone.value = prefillTo;
     $newMsgError.style.display = 'none';
@@ -5123,6 +5125,18 @@
     $newMsgRoutes.classList.remove('active');
     $newMsgRoutes.innerHTML = '';
     setTimeout(() => $newMsgPhone.focus(), 100);
+  }
+
+  function flushPendingComposeBody() {
+    if (!pendingComposeBody) return;
+    const body = pendingComposeBody;
+    pendingComposeBody = '';
+    if (!$composeInput || $composeInput.disabled) return;
+    $composeInput.value = body;
+    $composeInput.dispatchEvent(new Event('input'));
+    $composeInput.focus();
+    const end = $composeInput.value.length;
+    try { $composeInput.setSelectionRange(end, end); } catch (_) {}
   }
 
   function handleDeepLink(rawUrl) {
@@ -5136,7 +5150,10 @@
       const action = (url.host || url.hostname || '').toLowerCase();
       switch (action) {
         case 'compose':
-          openNewMsg({ to: url.searchParams.get('to') || '' });
+          openNewMsg({
+            to: url.searchParams.get('to') || '',
+            body: url.searchParams.get('body') || '',
+          });
           break;
         case 'search': {
           const q = url.searchParams.get('q') || '';
@@ -5203,6 +5220,7 @@
     if (existingReplyRoute) {
       closeNewMsg();
       await revealAndSelectConversation(existingReplyRoute);
+      flushPendingComposeBody();
       return;
     }
     $newMsgGo.disabled = true;
@@ -5224,14 +5242,15 @@
       await loadConversations();
       const convo = conversations.find(c => c.ConversationID === data.conversation_id);
       if (convo) {
-        revealAndSelectConversation(convo);
+        await revealAndSelectConversation(convo);
       } else {
         // Conversation might not be in the list yet, create a minimal one
-        revealAndSelectConversation({
+        await revealAndSelectConversation({
           ConversationID: data.conversation_id,
           Name: data.name || phone,
         });
       }
+      flushPendingComposeBody();
     } catch (err) {
       $newMsgError.textContent = err.message || 'Failed to start conversation';
       $newMsgError.style.display = 'block';

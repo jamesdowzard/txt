@@ -1,10 +1,10 @@
-# Agent Progress - tb-unify
+# Agent Progress - tb-compose-body-prefill
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T02:21:03Z
+# Created: 2026-04-17T03:42:23Z
 
-feature=tb-unify
-name=tb-unify
+feature=tb-compose-body-prefill
+name=tb-compose-body-prefill
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T02:21:03Z
+created=2026-04-17T03:42:23Z
