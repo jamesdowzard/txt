@@ -7,7 +7,14 @@ type LegacyRepairReport struct {
 	DeletedSignalReactionPlaceholders   int
 	RemainingWhatsAppMediaPlaceholders  int
 	FixedGoogleOutgoingAttributionRows  int
+	DeletedTombstoneStubRows            int
+	DeletedEmptyTombstoneConversations  int
 }
+
+// tombstoneStubWhere matches Google Messages lifecycle rows that were written
+// as real messages before IsTombstoneStatus gated ingestion. status values
+// include TOMBSTONE_ONE_ON_ONE_SMS_CREATED, TOMBSTONE_PARTICIPANT_JOINED, etc.
+const tombstoneStubWhere = `status LIKE '%TOMBSTONE%'`
 
 const legacyWhatsAppReactionPlaceholderWhere = `
 	source_platform = 'whatsapp'
@@ -110,6 +117,26 @@ func (s *Store) RepairLegacyArtifacts() (LegacyRepairReport, error) {
 		report.FixedGoogleOutgoingAttributionRows = int(repaired)
 	}
 
+	tombstoneConversationIDs, err := selectStringColumnTx(tx, `
+		SELECT DISTINCT conversation_id
+		FROM messages
+		WHERE `+tombstoneStubWhere)
+	if err != nil {
+		return report, err
+	}
+
+	tombstoneResult, err := tx.Exec(`
+		DELETE FROM messages
+		WHERE ` + tombstoneStubWhere)
+	if err != nil {
+		return report, err
+	}
+	if deleted, err := tombstoneResult.RowsAffected(); err == nil {
+		report.DeletedTombstoneStubRows = int(deleted)
+	}
+
+	affectedConversationIDs = append(affectedConversationIDs, tombstoneConversationIDs...)
+
 	for _, conversationID := range affectedConversationIDs {
 		if _, err := tx.Exec(`
 			UPDATE conversations
@@ -122,6 +149,29 @@ func (s *Store) RepairLegacyArtifacts() (LegacyRepairReport, error) {
 		`, conversationID, conversationID); err != nil {
 			return report, err
 		}
+	}
+
+	// Drop conversations that became empty after tombstone cleanup — a
+	// tombstone-only conversation had no real content to begin with and
+	// should not appear in the sidebar. Only prune conversations touched
+	// by the tombstone delete to avoid removing legitimately empty threads
+	// (e.g., drafts or other future states).
+	for _, conversationID := range tombstoneConversationIDs {
+		var remaining int
+		if err := tx.QueryRow(`
+			SELECT COUNT(*) FROM messages WHERE conversation_id = ?
+		`, conversationID).Scan(&remaining); err != nil {
+			return report, err
+		}
+		if remaining > 0 {
+			continue
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM conversations WHERE conversation_id = ?
+		`, conversationID); err != nil {
+			return report, err
+		}
+		report.DeletedEmptyTombstoneConversations++
 	}
 
 	if err := tx.Commit(); err != nil {

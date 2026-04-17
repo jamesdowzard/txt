@@ -289,6 +289,12 @@ func New(logger zerolog.Logger) (*App, error) {
 				Int("fixed", report.FixedGoogleOutgoingAttributionRows).
 				Msg("Repaired legacy Google Messages outgoing attribution rows")
 		}
+		if report.DeletedTombstoneStubRows > 0 {
+			logger.Info().
+				Int("messages", report.DeletedTombstoneStubRows).
+				Int("conversations", report.DeletedEmptyTombstoneConversations).
+				Msg("Removed tombstone lifecycle rows and empty stub conversations")
+		}
 	}
 	if !Sandboxed() {
 		if mediaRepair, err := (&importer.WhatsAppNative{}).RepairLegacyMediaPlaceholders(store); err != nil {

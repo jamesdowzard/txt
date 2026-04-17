@@ -639,6 +639,13 @@ func (a *App) storeMessage(msg *gmproto.Message) {
 		status = ms.GetStatus().String()
 	}
 
+	// Tombstone statuses are conversation-lifecycle events, not real messages.
+	// Google emits one per addressable contact with body "Texting with <name>
+	// (SMS/MMS)", which otherwise creates phantom threads in the sidebar.
+	if client.IsTombstoneStatus(status) {
+		return
+	}
+
 	dbMsg := &db.Message{
 		MessageID:      msg.GetMessageID(),
 		ConversationID: msg.GetConversationID(),

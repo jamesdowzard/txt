@@ -92,6 +92,12 @@ func (h *EventHandler) handleMessage(evt *libgm.WrappedMessage) {
 		status = ms.GetStatus().String()
 	}
 
+	// Tombstone statuses are conversation-lifecycle events, not real messages.
+	// See IsTombstoneStatus for context.
+	if IsTombstoneStatus(status) {
+		return
+	}
+
 	dbMsg := &db.Message{
 		MessageID:      msg.GetMessageID(),
 		ConversationID: msg.GetConversationID(),

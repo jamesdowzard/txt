@@ -262,3 +262,97 @@ func TestRepairLegacyArtifactsFixesOutgoingGoogleMessageAttribution(t *testing.T
 		t.Fatal("expected incoming message to remain not-from-me")
 	}
 }
+
+func TestRepairLegacyArtifactsDropsTombstoneStubConversations(t *testing.T) {
+	store := newTestStore(t)
+
+	// Conversation with a lone tombstone stub — should be deleted entirely.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "sms:stub-only",
+		Name:           "Alice",
+		LastMessageTS:  5000,
+	}); err != nil {
+		t.Fatalf("seed stub-only convo: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "sms:stub-1",
+		ConversationID: "sms:stub-only",
+		Body:           "Texting with Alice (SMS/MMS)",
+		TimestampMS:    5000,
+		Status:         "TOMBSTONE_ONE_ON_ONE_SMS_CREATED",
+		IsFromMe:       true,
+	}); err != nil {
+		t.Fatalf("seed stub: %v", err)
+	}
+
+	// Conversation that has a tombstone AND real messages — keep convo,
+	// drop tombstone, recompute last_message_ts.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "sms:mixed",
+		Name:           "Bob",
+		LastMessageTS:  9000,
+	}); err != nil {
+		t.Fatalf("seed mixed convo: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "sms:real-1",
+		ConversationID: "sms:mixed",
+		Body:           "hey",
+		TimestampMS:    4000,
+		Status:         "INCOMING_COMPLETE",
+	}); err != nil {
+		t.Fatalf("seed real: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "sms:tomb-2",
+		ConversationID: "sms:mixed",
+		Body:           "Texting with Bob (SMS/MMS)",
+		TimestampMS:    9000,
+		Status:         "TOMBSTONE_ONE_ON_ONE_SMS_CREATED",
+		IsFromMe:       true,
+	}); err != nil {
+		t.Fatalf("seed mixed tomb: %v", err)
+	}
+
+	report, err := store.RepairLegacyArtifacts()
+	if err != nil {
+		t.Fatalf("RepairLegacyArtifacts(): %v", err)
+	}
+	if report.DeletedTombstoneStubRows != 2 {
+		t.Fatalf("DeletedTombstoneStubRows = %d, want 2", report.DeletedTombstoneStubRows)
+	}
+	if report.DeletedEmptyTombstoneConversations != 1 {
+		t.Fatalf("DeletedEmptyTombstoneConversations = %d, want 1", report.DeletedEmptyTombstoneConversations)
+	}
+
+	if _, err := store.GetConversation("sms:stub-only"); err == nil {
+		t.Fatal("expected stub-only conversation to be deleted")
+	}
+
+	mixed, err := store.GetConversation("sms:mixed")
+	if err != nil {
+		t.Fatalf("GetConversation(mixed): %v", err)
+	}
+	if mixed == nil {
+		t.Fatal("expected mixed conversation to remain")
+	}
+	if mixed.LastMessageTS != 4000 {
+		t.Fatalf("mixed.LastMessageTS = %d, want 4000", mixed.LastMessageTS)
+	}
+
+	tomb, err := store.GetMessageByID("sms:tomb-2")
+	if err != nil {
+		t.Fatalf("GetMessageByID(tomb-2): %v", err)
+	}
+	if tomb != nil {
+		t.Fatal("expected tombstone message to be deleted")
+	}
+
+	real, err := store.GetMessageByID("sms:real-1")
+	if err != nil {
+		t.Fatalf("GetMessageByID(real-1): %v", err)
+	}
+	if real == nil {
+		t.Fatal("expected real message to remain")
+	}
+}
