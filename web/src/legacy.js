@@ -403,6 +403,75 @@
     }
   }
 
+  // jumpToDate loads messages from a specific calendar day (local TZ) and
+  // scrolls to the top of the new window. Reuses the /api/conversations/
+  // :id/messages?after=<ms> endpoint so the server-side work is already
+  // done; this is purely a frontend reorientation.
+  async function jumpToDate(conv, isoDate) {
+    if (!conv || !conv.ConversationID || !isoDate) return;
+    const match = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      showThreadFeedback('Invalid date (expected YYYY-MM-DD).');
+      return;
+    }
+    const startOfDay = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0);
+    const afterMS = startOfDay.getTime();
+    try {
+      const msgs = await fetchJSON(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/messages?after=${afterMS}&limit=${MESSAGE_PAGE_SIZE}`);
+      if (!Array.isArray(msgs) || msgs.length === 0) {
+        showThreadFeedback(`No messages on or after ${isoDate}.`);
+        return;
+      }
+      // Server returns ascending-by-timestamp for the `after` path.
+      loadedMessages = msgs;
+      loadedDrafts = await fetchDrafts(conv.ConversationID).catch(() => []);
+      updateLoadedMessageBounds();
+      rememberKnownMessages(loadedMessages);
+      // New window — we have no "older" yet. Flag it so the older-loader
+      // will fetch prior messages if the user scrolls up past the top.
+      hasOlderMessages = true;
+      renderLoadedMessages({ stickToBottom: false });
+      // Scroll to the very top so the jumped-to day is visible.
+      $messagesArea.scrollTop = 0;
+      showThreadFeedback(`Jumped to ${isoDate}.`);
+    } catch (err) {
+      showThreadFeedback(`Jump failed: ${err.message || err}`);
+    }
+  }
+
+  function promptForDateAndJump(conv) {
+    if (!conv || !conv.ConversationID) return;
+    // Invisible <input type="date"> to trigger the native picker. Preferred
+    // over window.prompt because WKWebView shows a proper calendar.
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
+    document.body.appendChild(input);
+    const cleanup = () => {
+      if (input.parentNode) document.body.removeChild(input);
+    };
+    input.addEventListener('change', () => {
+      const value = input.value;
+      cleanup();
+      if (value) jumpToDate(conv, value);
+    });
+    input.addEventListener('blur', () => setTimeout(cleanup, 200));
+    // showPicker is supported in modern WebKit; fall back to focus+click.
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+      } else {
+        input.click();
+      }
+    } catch (err) {
+      cleanup();
+      const fallback = window.prompt('Jump to date (YYYY-MM-DD):', '');
+      if (fallback) jumpToDate(conv, fallback.trim());
+    }
+  }
+
   async function exportConversation(conv, format) {
     if (!conv || !conv.ConversationID) return;
     try {
@@ -2092,6 +2161,8 @@
         meta: number,
       });
     }
+    items.push({ type: 'divider' });
+    items.push({ label: 'Jump to date…', action: 'jump-to-date' });
     items.push({ type: 'divider' });
     items.push({ label: 'Export as JSON', action: 'export:json' });
     items.push({ label: 'Export as CSV', action: 'export:csv' });
@@ -4630,6 +4701,10 @@
             await exportConversation(context.conversation, format);
             return;
           }
+          if (action === 'jump-to-date') {
+            promptForDateAndJump(context.conversation);
+            return;
+          }
           if (action === 'rename-conversation') {
             await promptAndSetNickname(context.conversation);
             return;
@@ -5238,6 +5313,12 @@
         label: 'Mute until I unmute',
         icon: '🔕',
         run: () => { closeCommandPalette(); setConversationMute(convo, 0); },
+      });
+      items.push({
+        type: 'action',
+        label: 'Jump to date…',
+        icon: '📅',
+        run: () => { closeCommandPalette(); promptForDateAndJump(convo); },
       });
     }
     return items;
