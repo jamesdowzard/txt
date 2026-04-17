@@ -403,6 +403,53 @@
     }
   }
 
+  async function enableUnifiedThread(conv) {
+    if (!conv) return;
+    const routes = linkedRoutesForConversation(conv);
+    if (!routes || routes.length < 2) {
+      showThreadFeedback('No sibling routes to merge.');
+      return;
+    }
+    const ids = routes.map(r => r.ConversationID);
+    try {
+      const resp = await fetch('/api/merged-messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_ids: ids, limit: 200 }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Merge failed: ${body || resp.status}`);
+        return;
+      }
+      const msgs = await resp.json();
+      if (!Array.isArray(msgs)) {
+        showThreadFeedback('Merge failed: invalid response');
+        return;
+      }
+      unifiedThreadSiblings = ids;
+      loadedMessages = msgs; // already ascending by timestamp
+      loadedDrafts = [];
+      updateLoadedMessageBounds();
+      rememberKnownMessages(loadedMessages);
+      hasOlderMessages = false; // pagination disabled in merged mode
+      renderLoadedMessages({ stickToBottom: true });
+      refreshConversationChrome();
+      showThreadFeedback(`Merged ${ids.length} routes (${msgs.length} msgs).`);
+    } catch (err) {
+      showThreadFeedback(`Merge failed: ${err.message || err}`);
+    }
+  }
+
+  async function disableUnifiedThread() {
+    if (!unifiedThreadSiblings || !activeConversation) return;
+    unifiedThreadSiblings = null;
+    hasOlderMessages = true;
+    await loadMessages(activeConvoId, { reset: true });
+    refreshConversationChrome();
+    showThreadFeedback('Showing single route.');
+  }
+
   // jumpToDate loads messages from a specific calendar day (local TZ) and
   // scrolls to the top of the new window. Reuses the /api/conversations/
   // :id/messages?after=<ms> endpoint so the server-side work is already
@@ -2161,6 +2208,15 @@
         meta: number,
       });
     }
+    const siblingRoutes = linkedRoutesForConversation(convo);
+    if (siblingRoutes && siblingRoutes.length >= 2) {
+      items.push({ type: 'divider' });
+      if (unifiedThreadSiblings) {
+        items.push({ label: 'Unmerge routes (show single platform)', action: 'unify-thread:off' });
+      } else {
+        items.push({ label: `Merge ${siblingRoutes.length} routes into one thread`, action: 'unify-thread:on' });
+      }
+    }
     items.push({ type: 'divider' });
     items.push({ label: 'Jump to date…', action: 'jump-to-date' });
     items.push({ type: 'divider' });
@@ -2537,6 +2593,15 @@
 
   // ─── Select Conversation ───
   async function selectConversation(convo) {
+    // Navigating between contacts discards any merged-view state — it was
+    // scoped to the previous contact's route set.
+    if (unifiedThreadSiblings) {
+      const identity = conversationPersonIdentity(convo);
+      const prevIdentity = conversationPersonIdentity(activeConversation);
+      if (!identity || !prevIdentity || identity.key !== prevIdentity.key) {
+        unifiedThreadSiblings = null;
+      }
+    }
     activeConvoId = convo.ConversationID;
     activeConversation = convo;
     pendingDeepLinkConversationID = '';
@@ -2587,6 +2652,11 @@
   const THREAD_RENDER_WINDOW_STEP = 70;
   let loadedMessages = [];
   let loadedDrafts = [];
+  // When non-null, the thread is showing a merged view across these sibling
+  // conversation IDs (SMS + iMessage for the same contact). Pagination is
+  // disabled in this mode — merged view is a one-shot fetch of the most
+  // recent 200 messages across all routes.
+  let unifiedThreadSiblings = null;
   let draftEdits = new Map();
   let oldestLoadedTS = 0;
   let newestLoadedTS = 0;
@@ -4703,6 +4773,14 @@
           }
           if (action === 'jump-to-date') {
             promptForDateAndJump(context.conversation);
+            return;
+          }
+          if (action === 'unify-thread:on') {
+            await enableUnifiedThread(context.conversation);
+            return;
+          }
+          if (action === 'unify-thread:off') {
+            await disableUnifiedThread();
             return;
           }
           if (action === 'rename-conversation') {

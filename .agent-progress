@@ -1,10 +1,10 @@
-# Agent Progress - tb-jump-to-date
+# Agent Progress - tb-unify
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T02:16:33Z
+# Created: 2026-04-17T02:21:03Z
 
-feature=tb-jump-to-date
-name=tb-jump-to-date
+feature=tb-unify
+name=tb-unify
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T02:16:33Z
+created=2026-04-17T02:21:03Z

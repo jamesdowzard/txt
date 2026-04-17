@@ -713,6 +713,64 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		writeJSON(w, results)
 	})
 
+	// /api/merged-messages fans a list of conversation IDs (typically SMS +
+	// iMessage siblings for the same phone number) into a single
+	// chronologically-sorted message feed. The frontend already groups
+	// matching routes in the sidebar (see buildConversationRenderItems);
+	// this endpoint lets it show a single "unified" thread on click.
+	mux.HandleFunc("/api/merged-messages", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "method not allowed", 405)
+			return
+		}
+		var req struct {
+			ConversationIDs []string `json:"conversation_ids"`
+			Limit           int      `json:"limit,omitempty"`
+			AfterMS         int64    `json:"after_ms,omitempty"`
+			BeforeMS        int64    `json:"before_ms,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		ids := make([]string, 0, len(req.ConversationIDs))
+		for _, id := range req.ConversationIDs {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				ids = append(ids, trimmed)
+			}
+		}
+		if len(ids) == 0 {
+			httpError(w, "conversation_ids is required", 400)
+			return
+		}
+		if len(ids) > 32 {
+			httpError(w, "too many conversation_ids (max 32)", 400)
+			return
+		}
+		limit := req.Limit
+		if limit <= 0 {
+			limit = 200
+		}
+		if limit > 2000 {
+			limit = 2000
+		}
+		var msgs []*db.Message
+		var err error
+		if req.AfterMS > 0 || req.BeforeMS > 0 {
+			msgs, err = store.GetMessagesByConversationsRange(ids, req.AfterMS, req.BeforeMS, limit)
+		} else {
+			msgs, err = store.GetMessagesByConversations(ids, limit)
+		}
+		if err != nil {
+			httpError(w, "merged-messages: "+err.Error(), 500)
+			return
+		}
+		if msgs == nil {
+			msgs = []*db.Message{}
+		}
+		writeJSON(w, msgs)
+	})
+
 	mux.HandleFunc("/api/link-preview", func(w http.ResponseWriter, r *http.Request) {
 		rawURL := r.URL.Query().Get("url")
 		if rawURL == "" {
