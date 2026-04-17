@@ -89,6 +89,14 @@ fi
 
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
 
+# Build the Go sidecar + Vite dist first. `cargo tauri build` only rebuilds
+# the Rust shell — without this step, src-tauri/binaries/textbridge-backend-*
+# and the embedded web UI remain whatever a previous run left in place. That
+# bit us in v0.7.0 + v0.7.1, which both shipped a sidecar from a prior release
+# cycle and silently dropped every Go-side change.
+echo "Building Go sidecar + web UI..."
+"$SCRIPT_DIR/build-sidecar"
+
 echo "Building ${APP_NAME} (universal: arm64 + x86_64)..."
 cargo tauri build --target universal-apple-darwin 2>&1 | grep -v "failed to remove extra attributes" || true
 
