@@ -8,7 +8,7 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname, snoozed_until`
 
 const (
 	NotificationModeAll      = "all"
@@ -109,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +266,17 @@ func (s *Store) SetConversationPinned(id string, pinned bool) error {
 	return err
 }
 
+// SetConversationSnooze sets snoozed_until to the given unix second, hiding
+// the conversation from list queries until the time passes. Pass 0 to
+// unsnooze immediately.
+func (s *Store) SetConversationSnooze(id string, until int64) error {
+	if until < 0 {
+		until = 0
+	}
+	_, err := s.db.Exec(`UPDATE conversations SET snoozed_until = ? WHERE conversation_id = ?`, until, id)
+	return err
+}
+
 // SetConversationNickname sets a local display name override. Empty nickname
 // clears the override and callers fall back to conversations.name.
 // The nickname is local-only — never synced upstream to libgm/Google Messages.
@@ -296,13 +307,15 @@ func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversa
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().Unix()
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE folder = ?
+		  AND (snoozed_until = 0 OR snoozed_until <= ?)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
-	`, normalized, limit)
+	`, normalized, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -311,12 +324,14 @@ func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversa
 }
 
 func (s *Store) ListConversations(limit int) ([]*Conversation, error) {
+	now := time.Now().Unix()
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
+		WHERE snoozed_until = 0 OR snoozed_until <= ?
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
-	`, limit)
+	`, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -338,13 +353,15 @@ func (s *Store) ConversationCount(sourcePlatform string) (int, error) {
 
 // ListConversationsByPlatform lists conversations filtered by source platform.
 func (s *Store) ListConversationsByPlatform(platform string, limit int) ([]*Conversation, error) {
+	now := time.Now().Unix()
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE source_platform = ?
+		  AND (snoozed_until = 0 OR snoozed_until <= ?)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
-	`, platform, limit)
+	`, platform, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +404,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -401,7 +418,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

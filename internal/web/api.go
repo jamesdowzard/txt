@@ -494,6 +494,39 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			writeJSON(w, convo)
 			return
 		}
+		if action == "snooze" || action == "unsnooze" {
+			if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			var until int64
+			if action == "snooze" {
+				var req struct {
+					Until int64 `json:"until"` // unix seconds; must be > now
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+					httpError(w, "invalid JSON: "+err.Error(), 400)
+					return
+				}
+				until = req.Until
+				if until <= 0 {
+					httpError(w, "'until' must be a future unix timestamp", 400)
+					return
+				}
+			}
+			if err := store.SetConversationSnooze(convID, until); err != nil {
+				httpError(w, "set snooze: "+err.Error(), 500)
+				return
+			}
+			convo, err := store.GetConversation(convID)
+			if err != nil {
+				httpError(w, "get conversation: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			writeJSON(w, convo)
+			return
+		}
 		if action == "nickname" {
 			if r.Method != http.MethodPost && r.Method != http.MethodPatch {
 				httpError(w, "method not allowed", 405)

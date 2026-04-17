@@ -26,6 +26,7 @@ type Conversation struct {
 	Folder           string `json:"folder,omitempty"` // inbox, archive, spam (see FolderInbox/Archive/Spam)
 	PinnedAt         int64  `json:"pinned_at,omitempty"` // unix seconds; 0 = not pinned. Sorts pinned > 0 above unpinned.
 	Nickname         string `json:"nickname,omitempty"` // user-set local display name; falls back to Name when empty.
+	SnoozedUntil     int64  `json:"snoozed_until,omitempty"` // unix seconds; 0 = not snoozed. When >0 and now() < SnoozedUntil, hide from inbox list until it expires.
 }
 
 type Message struct {
@@ -251,6 +252,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE conversations ADD COLUMN pinned_at INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE conversations ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE conversations ADD COLUMN nickname TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE conversations ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // ignore "duplicate column" errors
 	}

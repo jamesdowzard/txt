@@ -338,6 +338,51 @@
     return `<svg viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-2-7-2-2V4H9v4L7 10l-2 7z"/></svg>`;
   }
 
+  async function snoozeConversation(conv, untilSec) {
+    if (!conv || !conv.ConversationID) return;
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ until: untilSec }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Snooze failed: ${body || resp.status}`);
+        return;
+      }
+      await loadConversations();
+      showThreadFeedback(`Snoozed until ${new Date(untilSec * 1000).toLocaleString([], { hour: 'numeric', minute: '2-digit' })}.`);
+    } catch (err) {
+      showThreadFeedback(`Snooze failed: ${err.message || err}`);
+    }
+  }
+
+  async function unsnoozeConversation(conv) {
+    if (!conv || !conv.ConversationID) return;
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/unsnooze`, {
+        method: 'POST',
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`Unsnooze failed: ${body || resp.status}`);
+        return;
+      }
+      await loadConversations();
+      showThreadFeedback('Unsnoozed.');
+    } catch (err) {
+      showThreadFeedback(`Unsnooze failed: ${err.message || err}`);
+    }
+  }
+
+  function snoozeUntilTomorrow9am() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return Math.floor(d.getTime() / 1000);
+  }
+
   async function setConversationReadState(conv, read) {
     if (!conv || !conv.ConversationID) return;
     const endpoint = read ? '/api/mark-read' : '/api/mark-unread';
@@ -1985,6 +2030,18 @@
         action: 'rename-conversation',
       },
     );
+    const snoozedUntil = convo.SnoozedUntil || 0;
+    const nowSecSnooze = Math.floor(Date.now() / 1000);
+    if (snoozedUntil > nowSecSnooze) {
+      items.push({
+        label: `Snoozed until ${new Date(snoozedUntil * 1000).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })} — unsnooze`,
+        action: 'unsnooze-conversation',
+      });
+    } else {
+      items.push({ label: 'Snooze 1 hour', action: 'snooze:3600' });
+      items.push({ label: 'Snooze 8 hours', action: 'snooze:28800' });
+      items.push({ label: 'Snooze until tomorrow (9am)', action: 'snooze:tomorrow-9' });
+    }
     if (convo.Nickname) {
       items.push({
         label: 'Clear nickname',
@@ -4491,6 +4548,23 @@
           }
           if (action === 'mark-read' || action === 'mark-unread') {
             await setConversationReadState(context.conversation, action === 'mark-read');
+            return;
+          }
+          if (action === 'unsnooze-conversation') {
+            await unsnoozeConversation(context.conversation);
+            return;
+          }
+          if (action.startsWith('snooze:')) {
+            const key = action.slice('snooze:'.length);
+            let until;
+            if (key === 'tomorrow-9') {
+              until = snoozeUntilTomorrow9am();
+            } else {
+              const secs = Number(key) || 0;
+              if (secs <= 0) return;
+              until = Math.floor(Date.now() / 1000) + secs;
+            }
+            await snoozeConversation(context.conversation, until);
             return;
           }
           if (action.startsWith('notification:')) {
