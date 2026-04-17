@@ -3,18 +3,23 @@ package web
 import "sync"
 
 const (
-	EventTypeConversations = "conversations"
-	EventTypeDrafts        = "drafts"
-	EventTypeHeartbeat     = "heartbeat"
-	EventTypeMessages      = "messages"
-	EventTypeStatus        = "status"
-	EventTypeTyping        = "typing"
+	EventTypeConversations   = "conversations"
+	EventTypeDrafts          = "drafts"
+	EventTypeHeartbeat       = "heartbeat"
+	EventTypeMessages        = "messages"
+	EventTypeStatus          = "status"
+	EventTypeTyping          = "typing"
+	EventTypeIncomingMessage = "incoming_message"
 
 	subscriberChannelBuffer = 8
 	subscriberMaxPending    = 128
 )
 
 // StreamEvent is a small invalidation payload pushed to connected browsers.
+// When Type == EventTypeIncomingMessage, Body + MessageID + ConversationName
+// carry enough context for the native Tauri shell (see desktop/src-tauri/src/
+// notifications.rs) to show a system notification with an inline reply action
+// without round-tripping.
 type StreamEvent struct {
 	Type           string `json:"type"`
 	ConversationID string `json:"conversation_id,omitempty"`
@@ -23,6 +28,13 @@ type StreamEvent struct {
 	SenderNumber   string `json:"sender_number,omitempty"`
 	Timestamp      int64  `json:"timestamp,omitempty"`
 	Typing         *bool  `json:"typing,omitempty"`
+
+	// Populated only for EventTypeIncomingMessage.
+	MessageID        string `json:"message_id,omitempty"`
+	Body             string `json:"body,omitempty"`
+	IsGroup          bool   `json:"is_group,omitempty"`
+	NotificationMode string `json:"notification_mode,omitempty"`
+	ConversationName string `json:"conversation_name,omitempty"`
 }
 
 type eventSubscriber struct {
@@ -127,6 +139,10 @@ func streamEventKey(evt StreamEvent) string {
 	switch evt.Type {
 	case EventTypeMessages, EventTypeDrafts, EventTypeTyping:
 		return evt.Type + ":" + evt.ConversationID
+	case EventTypeIncomingMessage:
+		// Keyed by message ID so each new-message event stays discrete —
+		// collapsing them would drop notifications the shell still needs.
+		return evt.Type + ":" + evt.MessageID
 	default:
 		return evt.Type
 	}
@@ -227,4 +243,20 @@ func (b *EventBroker) PublishTyping(conversationID, senderName, senderNumber str
 		SenderNumber:   senderNumber,
 		Typing:         &typing,
 	})
+}
+
+// PublishIncomingMessage fans an incoming-message notification out to SSE
+// subscribers. Unlike EventTypeMessages (a coarse "refresh the thread" nudge),
+// this event carries the full payload the native Tauri shell needs to show a
+// system notification with an inline reply action — no callback round-trips.
+//
+// Callers are responsible for filtering out IsFromMe and old messages before
+// publishing; the shell still re-checks NotificationMode / IsMuted so backend
+// and shell can't accidentally double-notify.
+func (b *EventBroker) PublishIncomingMessage(evt StreamEvent) {
+	if b == nil {
+		return
+	}
+	evt.Type = EventTypeIncomingMessage
+	b.Publish(evt)
 }

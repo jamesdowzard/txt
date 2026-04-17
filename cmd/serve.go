@@ -82,7 +82,46 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 	if macNotifier.Enabled() {
 		logger.Info().Msg("Native macOS notifications enabled for fresh inbound messages")
 	}
-	a.OnIncomingMessage = macNotifier.NotifyIncomingMessage
+	// Fan every inbound message to two sinks:
+	//   1. The Go-side macOS notifier (terminal-notifier; click-to-open, no reply).
+	//      Stays on by default so CLI `./textbridge serve` keeps working.
+	//   2. The SSE event bus as EventTypeIncomingMessage. The Tauri shell
+	//      subscribes and shows a proper UNUserNotificationCenter-style
+	//      notification with an inline reply action, routing the reply back
+	//      via /api/send. Safe to fan to both: the Tauri shell launches the
+	//      sidecar with OPENMESSAGES_MACOS_NOTIFICATIONS=0 so the Go-side
+	//      notifier no-ops in that process tree.
+	a.OnIncomingMessage = func(msg *db.Message) {
+		macNotifier.NotifyIncomingMessage(msg)
+		if msg == nil || msg.IsFromMe {
+			return
+		}
+		convName := ""
+		notificationMode := ""
+		isGroup := false
+		if convo, err := a.Store.GetConversation(msg.ConversationID); err == nil && convo != nil {
+			convName = convo.Name
+			if convo.Nickname != "" {
+				convName = convo.Nickname
+			}
+			notificationMode = convo.NotificationMode
+			isGroup = convo.IsGroup
+			if convo.IsMuted() {
+				return // respect the per-conversation mute
+			}
+		}
+		events.PublishIncomingMessage(web.StreamEvent{
+			ConversationID:   msg.ConversationID,
+			MessageID:        msg.MessageID,
+			SenderName:       msg.SenderName,
+			SenderNumber:     msg.SenderNumber,
+			Body:             msg.Body,
+			Timestamp:        msg.TimestampMS,
+			IsGroup:          isGroup,
+			NotificationMode: notificationMode,
+			ConversationName: convName,
+		})
+	}
 
 	// Connect to Google Messages (skip in demo mode)
 	if !isDemo {

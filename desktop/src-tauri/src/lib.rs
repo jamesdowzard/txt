@@ -1,3 +1,6 @@
+mod notifications;
+mod sse;
+
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -15,6 +18,8 @@ use tauri_plugin_single_instance;
 // Tauri event name used to deliver `textbridge://…` URLs to the WebView.
 // Matches the subscriber wired in web/src/legacy.js.
 const DEEP_LINK_EVENT: &str = "textbridge://deep-link";
+const BACKEND_ORIGIN: &str = "http://127.0.0.1:7007";
+const BUNDLE_ID: &str = "ai.james-is-an.textbridge";
 
 struct BackendChild(Mutex<Option<CommandChild>>);
 
@@ -57,7 +62,10 @@ pub fn run() {
                 .env("OPENMESSAGES_DATA_DIR", data_dir.to_string_lossy().to_string())
                 .env("OPENMESSAGES_PORT", "7007")
                 .env("OPENMESSAGES_LOG_LEVEL", "info")
-                .env("OPENMESSAGES_MACOS_NOTIFICATIONS", "1")
+                // Tauri shell subscribes to the SSE bus and shows native
+                // notifications with inline reply (see sse.rs). Disable the
+                // Go-side terminal-notifier path so we don't double-notify.
+                .env("OPENMESSAGES_MACOS_NOTIFICATIONS", "0")
                 .env("TEXTBRIDGE_GOOGLE_ONLY", "1");
 
             let (mut rx, child) = sidecar.spawn().expect("spawn backend sidecar");
@@ -85,6 +93,15 @@ pub fn run() {
                 for url in event.urls() {
                     let _ = deep_link_handle.emit(DEEP_LINK_EVENT, url.to_string());
                 }
+            });
+
+            // Native-notifications pipeline (P1 #9). Registers the bundle
+            // with NSUserNotificationCenter and spawns a background SSE
+            // subscriber that shows a notification per inbound message with
+            // an inline reply action.
+            notifications::init(BUNDLE_ID);
+            tauri::async_runtime::spawn(async move {
+                sse::run(BACKEND_ORIGIN.to_string()).await;
             });
 
             // Auto-update check at launch. Skip in dev (debug) builds —
