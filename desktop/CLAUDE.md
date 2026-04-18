@@ -96,7 +96,7 @@ all three entries are present.
    `latest.json`) to the GitHub Release the script tagged as `v$NEW_VERSION`.
 
 The updater endpoint in `tauri.conf.json` points at
-`https://github.com/jamesdowzard/textbridge/releases/latest/download/latest.json`,
+`https://github.com/jamesdowzard/txt/releases/latest/download/latest.json`,
 so installed apps automatically pick up whatever release is marked "latest" on
 GitHub.
 

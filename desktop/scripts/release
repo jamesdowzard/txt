@@ -19,7 +19,7 @@ STABLE_ICON="$REPO_DIR/src-tauri/icons/icon-1024.png"
 UPDATER_KEY_SCRIPT="$SCRIPT_DIR/updater-key"
 # GitHub Release tag/URL pattern that the updater fetches latest.json + tarball from.
 # Adjust if you switch hosting (e.g. Cloudflare R2). Must match plugins.updater.endpoints.
-UPDATER_RELEASE_BASE="${UPDATER_RELEASE_BASE:-https://github.com/jamesdowzard/textbridge/releases/download}"
+UPDATER_RELEASE_BASE="${UPDATER_RELEASE_BASE:-https://github.com/jamesdowzard/txt/releases/download}"
 
 TARGET_DIR=$(cd "$REPO_DIR/src-tauri" && cargo metadata --format-version 1 2>/dev/null | uv run --no-project python3 -c "import json,sys; print(json.load(sys.stdin).get('target_directory', '$REPO_DIR/src-tauri/target'))")
 BUILD_APP="$TARGET_DIR/universal-apple-darwin/release/bundle/macos/${APP_NAME}.app"
