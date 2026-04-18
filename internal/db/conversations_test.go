@@ -229,6 +229,10 @@ func TestListConversationsByFolder(t *testing.T) {
 	_ = store.UpsertConversation(&Conversation{ConversationID: "a", Name: "A", LastMessageTS: 3000})
 	_ = store.UpsertConversation(&Conversation{ConversationID: "b", Name: "B", LastMessageTS: 2000, Folder: FolderArchive})
 	_ = store.UpsertConversation(&Conversation{ConversationID: "c", Name: "C", LastMessageTS: 1000, Folder: FolderSpam})
+	// Seed one message per conversation so the EXISTS filter in ListConversations doesn't hide them.
+	_ = store.UpsertMessage(&Message{MessageID: "ma", ConversationID: "a", Body: "hi", TimestampMS: 3000})
+	_ = store.UpsertMessage(&Message{MessageID: "mb", ConversationID: "b", Body: "hi", TimestampMS: 2000})
+	_ = store.UpsertMessage(&Message{MessageID: "mc", ConversationID: "c", Body: "hi", TimestampMS: 1000})
 
 	inbox, err := store.ListConversationsByFolder(FolderInbox, 100)
 	if err != nil || len(inbox) != 1 || inbox[0].ConversationID != "a" {
@@ -272,6 +276,15 @@ func TestListConversations_Ordering(t *testing.T) {
 	for i := range conversations {
 		if err := store.UpsertConversation(&conversations[i]); err != nil {
 			t.Fatalf("upsert: %v", err)
+		}
+		// Seed a message per conversation so ListConversations' EXISTS filter doesn't hide it.
+		if err := store.UpsertMessage(&Message{
+			MessageID:      "m-" + conversations[i].ConversationID,
+			ConversationID: conversations[i].ConversationID,
+			Body:           "hi",
+			TimestampMS:    conversations[i].LastMessageTS,
+		}); err != nil {
+			t.Fatalf("upsert msg: %v", err)
 		}
 	}
 
@@ -367,6 +380,9 @@ func TestListConversations_AfterTimestampUpdate(t *testing.T) {
 	// Insert two conversations.
 	store.UpsertConversation(&Conversation{ConversationID: "c1", Name: "First", LastMessageTS: 1000})
 	store.UpsertConversation(&Conversation{ConversationID: "c2", Name: "Second", LastMessageTS: 2000})
+	// Seed a message per conversation so ListConversations' EXISTS filter doesn't hide them.
+	store.UpsertMessage(&Message{MessageID: "m1", ConversationID: "c1", Body: "hi", TimestampMS: 1000})
+	store.UpsertMessage(&Message{MessageID: "m2", ConversationID: "c2", Body: "hi", TimestampMS: 2000})
 
 	// Verify initial ordering.
 	got, _ := store.ListConversations(100)
@@ -549,10 +565,18 @@ func TestListConversations_ManyEntries(t *testing.T) {
 
 	// Insert many conversations.
 	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("conv-%03d", i)
 		store.UpsertConversation(&Conversation{
-			ConversationID: fmt.Sprintf("conv-%03d", i),
+			ConversationID: id,
 			Name:           fmt.Sprintf("Conv %d", i),
 			LastMessageTS:  int64(i * 100),
+		})
+		// Seed a message per conversation so ListConversations' EXISTS filter doesn't hide it.
+		store.UpsertMessage(&Message{
+			MessageID:      "m-" + id,
+			ConversationID: id,
+			Body:           "hi",
+			TimestampMS:    int64(i * 100),
 		})
 	}
 
@@ -617,5 +641,46 @@ func TestSearchConversationsByMetadata(t *testing.T) {
 	}
 	if got[0].ConversationID != "c1" {
 		t.Fatalf("got conversation %q, want c1", got[0].ConversationID)
+	}
+}
+
+func TestListConversationsHidesEmptyConversations(t *testing.T) {
+	store := newTestStore(t)
+
+	// Conversation with real content — should appear.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "c-real",
+		Name:           "Real",
+		LastMessageTS:  9000,
+	}); err != nil {
+		t.Fatalf("seed real convo: %v", err)
+	}
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "m1",
+		ConversationID: "c-real",
+		Body:           "hello",
+		TimestampMS:    9000,
+	}); err != nil {
+		t.Fatalf("seed real msg: %v", err)
+	}
+
+	// Phantom conversation with no messages — should NOT appear.
+	if err := store.UpsertConversation(&Conversation{
+		ConversationID: "c-phantom",
+		Name:           "Phantom",
+		LastMessageTS:  5000,
+	}); err != nil {
+		t.Fatalf("seed phantom convo: %v", err)
+	}
+
+	got, err := store.ListConversations(50)
+	if err != nil {
+		t.Fatalf("ListConversations: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListConversations returned %d rows, want 1 (only the populated one)", len(got))
+	}
+	if got[0].ConversationID != "c-real" {
+		t.Fatalf("ListConversations returned %q, want c-real", got[0].ConversationID)
 	}
 }

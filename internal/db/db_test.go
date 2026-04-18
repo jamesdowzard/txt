@@ -34,6 +34,15 @@ func TestConversationCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert conversation: %v", err)
 	}
+	// Seed a message so ListConversations' EXISTS filter doesn't hide it.
+	if err := store.UpsertMessage(&Message{
+		MessageID:      "m1",
+		ConversationID: "conv-1",
+		Body:           "hello",
+		TimestampMS:    conv.LastMessageTS,
+	}); err != nil {
+		t.Fatalf("seed msg: %v", err)
+	}
 
 	// Get
 	got, err := store.GetConversation("conv-1")
@@ -89,6 +98,15 @@ func TestListConversationsOrdering(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("upsert: %v", err)
+		}
+		// Seed a message so ListConversations' EXISTS filter doesn't hide it.
+		if err := store.UpsertMessage(&Message{
+			MessageID:      "m-" + name,
+			ConversationID: name,
+			Body:           "hi",
+			TimestampMS:    ts,
+		}); err != nil {
+			t.Fatalf("seed msg: %v", err)
 		}
 	}
 

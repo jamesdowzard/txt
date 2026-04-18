@@ -313,6 +313,7 @@ func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversa
 		FROM conversations
 		WHERE folder = ?
 		  AND (snoozed_until = 0 OR snoozed_until <= ?)
+		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.conversation_id)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, normalized, now, limit)
@@ -328,7 +329,8 @@ func (s *Store) ListConversations(limit int) ([]*Conversation, error) {
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
-		WHERE snoozed_until = 0 OR snoozed_until <= ?
+		WHERE (snoozed_until = 0 OR snoozed_until <= ?)
+		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.conversation_id)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, now, limit)
@@ -359,6 +361,7 @@ func (s *Store) ListConversationsByPlatform(platform string, limit int) ([]*Conv
 		FROM conversations
 		WHERE source_platform = ?
 		  AND (snoozed_until = 0 OR snoozed_until <= ?)
+		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.conversation_id)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, platform, now, limit)
@@ -373,7 +376,7 @@ func (s *Store) SearchConversationsByMetadata(query string, limit int) ([]*Conve
 	rows, err := s.db.Query(`
 		SELECT DISTINCT `+conversationColumns+`
 		FROM conversations
-		WHERE name LIKE ?
+		WHERE (name LIKE ?
 			OR participants LIKE ?
 			OR conversation_id IN (
 				SELECT DISTINCT conversation_id
@@ -385,7 +388,8 @@ func (s *Store) SearchConversationsByMetadata(query string, limit int) ([]*Conve
 				FROM messages m
 				JOIN contacts c ON c.number = m.sender_number
 				WHERE c.name LIKE ? OR c.number LIKE ?
-			)
+			))
+		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.conversation_id)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
 	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", limit)

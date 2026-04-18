@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-APP_NAME="Textbridge"
+APP_NAME="txt"
 RELEASE_DIR="$REPO_DIR/release/stable"
 STABLE_APP="$RELEASE_DIR/${APP_NAME}.app"
 SYMLINK="/Applications/${APP_NAME}.app"
@@ -163,6 +163,14 @@ echo "Creating symlink in /Applications..."
 rm -rf "$SYMLINK"
 ln -sf "$STABLE_APP" "$SYMLINK"
 
+# Post-rename cleanup: remove the old Textbridge.app symlink if it survives.
+# Safe because it points at a path that no longer matches what we ship now.
+OLD_SYMLINK="/Applications/Textbridge.app"
+if [[ -L "$OLD_SYMLINK" ]]; then
+    echo "Removing orphaned $OLD_SYMLINK"
+    rm -f "$OLD_SYMLINK"
+fi
+
 # Register with Launch Services
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$SYMLINK"
 
@@ -219,7 +227,7 @@ import json, sys
 version, pub_date, url, sig, out = sys.argv[1:6]
 manifest = {
     "version": version,
-    "notes": f"Textbridge {version}",
+    "notes": f"txt {version}",
     "pub_date": pub_date,
     "platforms": {
         "darwin-aarch64": {"signature": sig, "url": url},

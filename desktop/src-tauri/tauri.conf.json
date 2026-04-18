@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Textbridge",
+  "productName": "txt",
   "version": "0.7.2",
   "identifier": "ai.james-is-an.textbridge",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Textbridge",
+        "title": "txt",
         "width": 1100,
         "height": 700,
         "minWidth": 800,

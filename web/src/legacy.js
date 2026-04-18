@@ -2623,7 +2623,7 @@
 
   function updateTitleUnreadCount(convos) {
     const total = convos.reduce((sum, c) => sum + (c.UnreadCount || 0), 0);
-    document.title = total > 0 ? `(${total}) Textbridge` : 'Textbridge';
+    document.title = total > 0 ? `(${total}) txt` : 'txt';
   }
 
   function syncActiveClusterState() {}
