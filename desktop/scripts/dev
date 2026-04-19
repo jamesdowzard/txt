@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-APP_NAME="Textbridge"
+APP_NAME="txt"
 DEV_APP_NAME="${APP_NAME}-dev"
 RELEASE_DIR="$REPO_DIR/release/dev"
 DEV_APP="$RELEASE_DIR/${DEV_APP_NAME}.app"

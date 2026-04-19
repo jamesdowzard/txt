@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Menu-bar popover
-NSStatusItem tray with VIP list + unread badge + quick compose (issue #20 item 1, #15 item #5b)
+Fix scripts/dev APP_NAME
+Change stale "Textbridge" to "txt" so scripts/dev --launch finds the built bundle
 
 ## Current State
 Not started. No work has been done yet.
