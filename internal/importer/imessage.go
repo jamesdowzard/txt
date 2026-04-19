@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/maxghenis/openmessage/internal/contacts"
@@ -97,6 +98,10 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 		}
 
 		for _, m := range msgs {
+			status := "delivered"
+			if m.isRead {
+				status = "read"
+			}
 			msg := &db.Message{
 				MessageID:      "imessage:" + m.guid,
 				ConversationID: convID,
@@ -104,10 +109,11 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 				SenderNumber:   m.senderID,
 				Body:           m.text,
 				TimestampMS:    m.timestampMS,
-				Status:         "delivered",
+				Status:         status,
 				IsFromMe:       m.isFromMe,
 				MediaID:        m.mediaPath,
 				MimeType:       m.mimeType,
+				Reactions:      m.reactionsJSON,
 				SourcePlatform: "imessage",
 				SourceID:       m.guid,
 			}
@@ -137,14 +143,43 @@ type imessageChat struct {
 }
 
 type imessageMessage struct {
-	guid        string
-	text        string
-	senderName  string
-	senderID    string
-	timestampMS int64
-	isFromMe    bool
-	mediaPath   string // relative to ~/Library/Messages/Attachments
-	mimeType    string
+	guid          string
+	text          string
+	senderName    string
+	senderID      string
+	timestampMS   int64
+	isFromMe      bool
+	isRead        bool
+	mediaPath     string // relative to ~/Library/Messages/Attachments
+	mimeType      string
+	reactionsJSON string // populated by attachReactions
+}
+
+// imessageRawReaction is one reaction-row from chat.db before aggregation.
+type imessageRawReaction struct {
+	targetGUID string // GUID of the message being reacted to
+	assocType  int    // 2000-2005 add, 3000-3005 remove
+	actor      string // sender_name (resolved if available, else handle id)
+	isFromMe   bool
+}
+
+// reactionEntry mirrors signalStoredReaction so the existing UI render path
+// (web/src/legacy.js) handles iMessage reactions with no client changes.
+type reactionEntry struct {
+	Emoji  string   `json:"emoji"`
+	Count  int      `json:"count"`
+	Actors []string `json:"actors,omitempty"`
+}
+
+// imessageReactionEmoji maps Apple's associated_message_type ids to the
+// emoji we render. The +1000 ("removed") variants are handled separately.
+var imessageReactionEmoji = map[int]string{
+	2000: "❤️",
+	2001: "👍",
+	2002: "👎",
+	2003: "😂",
+	2004: "‼️",
+	2005: "❓",
 }
 
 func (im *IMessage) loadChats(chatDB *sql.DB, contactIdx contacts.Index) ([]imessageChat, error) {
@@ -236,6 +271,9 @@ func (im *IMessage) loadChatParticipants(chatDB *sql.DB, chatRowID int) []map[st
 func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int, contactIdx contacts.Index) ([]imessageMessage, error) {
 	rows, err := chatDB.Query(`
 		SELECT m.guid, m.text, m.attributedBody, m.date, m.is_from_me,
+			COALESCE(m.is_read, 0) as is_read,
+			COALESCE(m.associated_message_type, 0) as assoc_type,
+			COALESCE(m.associated_message_guid, '') as assoc_guid,
 			COALESCE(h.id, '') as handle_id,
 			COALESCE(h.uncanonicalized_id, h.id, '') as handle_display,
 			(SELECT a.filename FROM attachment a
@@ -263,13 +301,40 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int, contactIdx conta
 	}
 
 	var msgs []imessageMessage
+	var rawReactions []imessageRawReaction
 	for rows.Next() {
 		var m imessageMessage
 		var date int64
-		var handleID, handleDisplay string
+		var assocType int
+		var assocGUID, handleID, handleDisplay string
 		var text, attachmentName, attachmentMime sql.NullString
 		var attributedBody []byte
-		if err := rows.Scan(&m.guid, &text, &attributedBody, &date, &m.isFromMe, &handleID, &handleDisplay, &attachmentName, &attachmentMime); err != nil {
+		var isRead int
+		if err := rows.Scan(&m.guid, &text, &attributedBody, &date, &m.isFromMe, &isRead, &assocType, &assocGUID, &handleID, &handleDisplay, &attachmentName, &attachmentMime); err != nil {
+			continue
+		}
+		m.isRead = isRead != 0
+		// Reaction rows look like normal messages but carry an
+		// associated_message_type in the 2000-3005 range and point at the
+		// target message via associated_message_guid (format: "p:N/<guid>").
+		if assocType >= 2000 && assocType <= 3005 && assocGUID != "" {
+			actor := im.MyName
+			if actor == "" {
+				actor = "Me"
+			}
+			if m.isFromMe == false {
+				if resolved := contactIdx.Lookup(handleID); resolved != "" {
+					actor = resolved
+				} else {
+					actor = handleDisplay
+				}
+			}
+			rawReactions = append(rawReactions, imessageRawReaction{
+				targetGUID: stripReactionGUIDPrefix(assocGUID),
+				assocType:  assocType,
+				actor:      actor,
+				isFromMe:   m.isFromMe,
+			})
 			continue
 		}
 		if text.Valid {
@@ -306,7 +371,92 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int, contactIdx conta
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	attachReactions(msgs, rawReactions)
+	return msgs, nil
+}
+
+// stripReactionGUIDPrefix turns "p:0/<guid>" into "<guid>". chat.db stores
+// the reaction target as a part-indexed reference; we only care about the
+// message GUID.
+func stripReactionGUIDPrefix(s string) string {
+	if i := strings.Index(s, "/"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// attachReactions folds the raw reaction rows into per-message JSON arrays
+// matching the shape the UI already renders for libgm/Signal. Removal rows
+// (assocType 3000-3005) drop the same actor's prior reaction of the same
+// kind so toggling a like on/off looks correct.
+func attachReactions(msgs []imessageMessage, raw []imessageRawReaction) {
+	if len(raw) == 0 {
+		return
+	}
+	// targetGUID → emoji → actor → present
+	state := map[string]map[string]map[string]bool{}
+	for _, r := range raw {
+		base := r.assocType
+		removed := false
+		if base >= 3000 {
+			base -= 1000
+			removed = true
+		}
+		emoji, ok := imessageReactionEmoji[base]
+		if !ok {
+			continue
+		}
+		byEmoji := state[r.targetGUID]
+		if byEmoji == nil {
+			byEmoji = map[string]map[string]bool{}
+			state[r.targetGUID] = byEmoji
+		}
+		actors := byEmoji[emoji]
+		if actors == nil {
+			actors = map[string]bool{}
+			byEmoji[emoji] = actors
+		}
+		if removed {
+			delete(actors, r.actor)
+		} else {
+			actors[r.actor] = true
+		}
+	}
+	for i := range msgs {
+		byEmoji, ok := state[msgs[i].guid]
+		if !ok {
+			continue
+		}
+		var entries []reactionEntry
+		for emoji, actors := range byEmoji {
+			if len(actors) == 0 {
+				continue
+			}
+			actorList := make([]string, 0, len(actors))
+			for a := range actors {
+				actorList = append(actorList, a)
+			}
+			sort.Strings(actorList)
+			entries = append(entries, reactionEntry{
+				Emoji:  emoji,
+				Count:  len(actorList),
+				Actors: actorList,
+			})
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		sort.Slice(entries, func(a, b int) bool {
+			return entries[a].Emoji < entries[b].Emoji
+		})
+		buf, err := json.Marshal(entries)
+		if err == nil {
+			msgs[i].reactionsJSON = string(buf)
+		}
+	}
 }
 
 // normaliseAttachmentPath converts an attachment.filename value from chat.db

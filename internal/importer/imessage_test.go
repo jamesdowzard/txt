@@ -55,7 +55,7 @@ func TestIMessageImportFromDB_DoesNotDeadlock(t *testing.T) {
 		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
 		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
-		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
 		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
 		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
@@ -63,13 +63,13 @@ func TestIMessageImportFromDB_DoesNotDeadlock(t *testing.T) {
 		`INSERT INTO handle VALUES (1, '+15551234567', '+1 555 1234567', 'iMessage')`,
 		`INSERT INTO chat VALUES (1, 'iMessage;-;+15551234567', '', 45)`,
 		`INSERT INTO chat_handle_join VALUES (1, 1)`,
-		`INSERT INTO message VALUES (1, 'msg-guid-1', 'hello world', NULL, 700000000000000000, 0, 1)`,
+		`INSERT INTO message VALUES (1, 'msg-guid-1', 'hello world', NULL, 700000000000000000, 0, 1, 0, 0, '')`,
 		`INSERT INTO chat_message_join VALUES (1, 1)`,
 
 		`INSERT INTO handle VALUES (2, '+15557654321', '+1 555 7654321', 'iMessage')`,
 		`INSERT INTO chat VALUES (2, 'iMessage;-;+15557654321', '', 45)`,
 		`INSERT INTO chat_handle_join VALUES (2, 2)`,
-		`INSERT INTO message VALUES (2, 'msg-guid-2', 'second chat', NULL, 700000000000000001, 1, 2)`,
+		`INSERT INTO message VALUES (2, 'msg-guid-2', 'second chat', NULL, 700000000000000001, 1, 2, 0, 0, '')`,
 		`INSERT INTO chat_message_join VALUES (2, 2)`,
 	}
 	for _, s := range stmts {
@@ -179,7 +179,7 @@ func TestIMessageImportFromDB_AttributedBodyFallback(t *testing.T) {
 		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
 		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
-		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
 		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
 		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
@@ -210,7 +210,7 @@ func TestIMessageImportFromDB_AttributedBodyFallback(t *testing.T) {
 	}
 	for i, r := range rows {
 		_, err := chatDB.Exec(
-			`INSERT INTO message VALUES (?, ?, ?, ?, ?, ?, 1)`,
+			`INSERT INTO message VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0, '')`,
 			r.rowid, r.guid, r.text, r.body, 700000000000000000+int64(i), r.isFromMe,
 		)
 		if err != nil {
@@ -259,7 +259,7 @@ func TestIMessageImportFromDB_ContactsResolution(t *testing.T) {
 		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
 		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
-		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
 		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
 		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
@@ -267,14 +267,14 @@ func TestIMessageImportFromDB_ContactsResolution(t *testing.T) {
 		`INSERT INTO chat VALUES (1, 'iMessage;-;+61437590462', '', 45)`,
 		`INSERT INTO chat_handle_join VALUES (1, 1)`,
 		`INSERT INTO chat_message_join VALUES (1, 1)`,
-		`INSERT INTO message VALUES (1, 'msg-from-tommi', 'Step 1 (done) - Purchase laptop', NULL, 700000000000000000, 0, 1)`,
+		`INSERT INTO message VALUES (1, 'msg-from-tommi', 'Step 1 (done) - Purchase laptop', NULL, 700000000000000000, 0, 1, 0, 0, '')`,
 		// Second chat with an UNKNOWN number — sender_name should fall back
 		// to the chat.db handle (no spurious "" stamping).
 		`INSERT INTO handle VALUES (2, '+61400000000', '+61400000000', 'iMessage')`,
 		`INSERT INTO chat VALUES (2, 'iMessage;-;+61400000000', '', 45)`,
 		`INSERT INTO chat_handle_join VALUES (2, 2)`,
 		`INSERT INTO chat_message_join VALUES (2, 2)`,
-		`INSERT INTO message VALUES (2, 'msg-from-unknown', 'Hello', NULL, 700000000000000001, 0, 2)`,
+		`INSERT INTO message VALUES (2, 'msg-from-unknown', 'Hello', NULL, 700000000000000001, 0, 2, 0, 0, '')`,
 	}
 	for _, s := range stmts {
 		if _, err := chatDB.Exec(s); err != nil {
@@ -345,7 +345,7 @@ func TestIMessageImportFromDB_AttachmentMetadata(t *testing.T) {
 		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
 		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
-		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
 		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
 		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
@@ -356,15 +356,15 @@ func TestIMessageImportFromDB_AttachmentMetadata(t *testing.T) {
 		`INSERT INTO chat_message_join VALUES (1, 2)`,
 		`INSERT INTO chat_message_join VALUES (1, 3)`,
 		// Image-only message from Tommi (object-replacement char in body)
-		`INSERT INTO message VALUES (1, 'msg-img-only', char(0xfffc), NULL, 700000000000000000, 0, 1)`,
+		`INSERT INTO message VALUES (1, 'msg-img-only', char(0xfffc), NULL, 700000000000000000, 0, 1, 0, 0, '')`,
 		`INSERT INTO attachment VALUES (10, 'att-1', '~/Library/Messages/Attachments/0f/15/UUID/IMG_9046.heic', 'image/heic', 0)`,
 		`INSERT INTO message_attachment_join VALUES (1, 10)`,
 		// Text-with-image message
-		`INSERT INTO message VALUES (2, 'msg-text-img', 'Check this out', NULL, 700000000000000001, 1, 1)`,
+		`INSERT INTO message VALUES (2, 'msg-text-img', 'Check this out', NULL, 700000000000000001, 1, 1, 0, 0, '')`,
 		`INSERT INTO attachment VALUES (11, 'att-2', '~/Library/Messages/Attachments/aa/bb/UUID2/snap.png', 'image/png', 0)`,
 		`INSERT INTO message_attachment_join VALUES (2, 11)`,
 		// Hidden attachment (e.g. Memoji metadata) → MediaID should stay empty
-		`INSERT INTO message VALUES (3, 'msg-hidden-att', 'Hi', NULL, 700000000000000002, 0, 1)`,
+		`INSERT INTO message VALUES (3, 'msg-hidden-att', 'Hi', NULL, 700000000000000002, 0, 1, 0, 0, '')`,
 		`INSERT INTO attachment VALUES (12, 'att-3', '~/Library/Messages/Attachments/cc/dd/UUID3/hidden.dat', 'application/octet-stream', 1)`,
 		`INSERT INTO message_attachment_join VALUES (3, 12)`,
 	}
@@ -421,5 +421,100 @@ func TestIMessageImportFromDB_AttachmentMetadata(t *testing.T) {
 	}
 	if hidden.MediaID != "" {
 		t.Errorf("hidden attachment leaked into MediaID: %q", hidden.MediaID)
+	}
+}
+
+// TestIMessageImportFromDB_Reactions exercises:
+//   - 2000-2005 → 6-emoji reactions stamped on the parent message
+//   - 3000+ removal cancels the same actor's prior reaction
+//   - "p:0/<guid>" associated_message_guid prefix is stripped
+//   - read receipt → status="read" on outgoing
+func TestIMessageImportFromDB_Reactions(t *testing.T) {
+	tempDir := t.TempDir()
+	chatDBPath := filepath.Join(tempDir, "chat.db")
+	chatDB, err := sql.Open("sqlite", chatDBPath)
+	if err != nil {
+		t.Fatalf("open chat.db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
+		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
+		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
+		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
+		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
+		`INSERT INTO handle VALUES (1, '+61437590462', '+61437590462', 'iMessage')`,
+		`INSERT INTO chat VALUES (1, 'iMessage;-;+61437590462', '', 45)`,
+		`INSERT INTO chat_handle_join VALUES (1, 1)`,
+		// Outgoing parent message that was read on the other end
+		`INSERT INTO chat_message_join VALUES (1, 1)`,
+		`INSERT INTO message VALUES (1, 'parent-1', 'Step 1 (done) - Purchase laptop', NULL, 700000000000000000, 1, NULL, 1, 0, '')`,
+		// Tommi loves it (assoc_type 2000)
+		`INSERT INTO chat_message_join VALUES (1, 2)`,
+		`INSERT INTO message VALUES (2, 'react-love', NULL, NULL, 700000000000000001, 0, 1, 0, 2000, 'p:0/parent-1')`,
+		// Tommi laughs at it (assoc_type 2003)
+		`INSERT INTO chat_message_join VALUES (1, 3)`,
+		`INSERT INTO message VALUES (3, 'react-laugh', NULL, NULL, 700000000000000002, 0, 1, 0, 2003, 'p:0/parent-1')`,
+		// Tommi removes the laugh (assoc_type 3003)
+		`INSERT INTO chat_message_join VALUES (1, 4)`,
+		`INSERT INTO message VALUES (4, 'react-laugh-remove', NULL, NULL, 700000000000000003, 0, 1, 0, 3003, 'p:0/parent-1')`,
+		// Me likes it too (assoc_type 2001 outgoing)
+		`INSERT INTO chat_message_join VALUES (1, 5)`,
+		`INSERT INTO message VALUES (5, 'react-like-me', NULL, NULL, 700000000000000004, 1, NULL, 0, 2001, 'p:0/parent-1')`,
+	}
+	for _, s := range stmts {
+		if _, err := chatDB.Exec(s); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+	chatDB.Close()
+
+	store, err := db.New(filepath.Join(tempDir, "messages.db"))
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer store.Close()
+
+	idx := contacts.NewIndex()
+	idx.Phones[contacts.NormalizePhone("+61437590462")] = "Tommi Yick"
+	im := &IMessage{DBPath: chatDBPath, MyName: "Me", Contacts: idx}
+	if _, err := im.ImportFromDB(store); err != nil {
+		t.Fatalf("ImportFromDB: %v", err)
+	}
+
+	parent, err := store.GetMessageByID("imessage:parent-1")
+	if err != nil || parent == nil {
+		t.Fatalf("parent message missing: %v", err)
+	}
+	if parent.Status != "read" {
+		t.Errorf("parent status = %q, want 'read'", parent.Status)
+	}
+	if parent.Reactions == "" {
+		t.Fatal("parent has no reactions JSON")
+	}
+	// We don't pin the entire JSON shape (sort order isn't guaranteed
+	// across map iterations) — just check that the surviving reactions
+	// are present and the removed one isn't.
+	if !strings.Contains(parent.Reactions, "❤️") {
+		t.Errorf("missing ❤️ reaction: %s", parent.Reactions)
+	}
+	if !strings.Contains(parent.Reactions, "👍") {
+		t.Errorf("missing 👍 reaction: %s", parent.Reactions)
+	}
+	if strings.Contains(parent.Reactions, "😂") {
+		t.Errorf("removed 😂 reaction still present: %s", parent.Reactions)
+	}
+	if !strings.Contains(parent.Reactions, "Tommi Yick") {
+		t.Errorf("Tommi not listed as actor: %s", parent.Reactions)
+	}
+	if !strings.Contains(parent.Reactions, `"Me"`) {
+		t.Errorf("Me not listed as actor: %s", parent.Reactions)
+	}
+
+	// Reaction rows themselves should NOT be imported as standalone
+	// messages.
+	if got, _ := store.GetMessageByID("imessage:react-love"); got != nil {
+		t.Error("reaction row leaked into messages table")
 	}
 }
