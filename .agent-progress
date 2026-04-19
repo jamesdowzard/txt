@@ -1,10 +1,10 @@
-# Agent Progress - menu-bar-popover
+# Agent Progress - fix-dev-script-name
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T11:21:50Z
+# Created: 2026-04-19T11:55:31Z
 
-feature=menu-bar-popover
-name=Menu-bar popover
+feature=fix-dev-script-name
+name=Fix scripts/dev APP_NAME
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T11:21:50Z
+created=2026-04-19T11:55:31Z
