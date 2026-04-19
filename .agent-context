@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Detach from upstream openmessage
-Rename Go module to github.com/jamesdowzard/txt, strip upstream refs from docs, remove upstream git remote, detach GitHub fork relationship. Keep bundle ID + binary name for codesign/data continuity.
+URL scheme + Shortcuts App Intents
+Register textbridge://compose URL scheme. Add macOS App Intents so Shortcuts.app can send messages through txt. Sidecar Swift binary or Tauri plugin.
 
 ## Current State
 Not started. No work has been done yet.

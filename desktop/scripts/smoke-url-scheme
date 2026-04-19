@@ -1,0 +1,63 @@
+#!/bin/bash
+# End-to-end smoke test for the txt:// URL scheme compose auto-send path.
+#
+# Usage:
+#   ./scripts/smoke-url-scheme <recipient> <body>
+#   ./scripts/smoke-url-scheme                         # uses demo defaults
+#
+# Requires the app to be running (either /Applications/txt.app or
+# /Applications/txt-dev.app). Fires `open txt://compose?to=...&body=...`
+# and polls /api/search for the body until it shows up as an outgoing
+# message. Exit 0 = message queued / sent; non-zero = backend not reachable
+# or message never landed.
+set -euo pipefail
+
+RECIPIENT="${1:-+61400000000}"
+STAMP="$(date +%s)"
+BODY="${2:-smoke test ${STAMP}}"
+BACKEND_ORIGIN="${TXT_BACKEND_ORIGIN:-http://127.0.0.1:7007}"
+TIMEOUT_SECS="${TXT_SMOKE_TIMEOUT:-15}"
+
+echo "==> txt URL scheme smoke test"
+echo "    recipient: $RECIPIENT"
+echo "    body:      $BODY"
+echo "    backend:   $BACKEND_ORIGIN"
+echo
+
+# 1. Confirm backend is up. If not, the app isn't running — can't test.
+if ! curl -sS --max-time 3 -o /dev/null -w "%{http_code}" "$BACKEND_ORIGIN/api/status" | grep -qE '^(200|204)$'; then
+    echo "    ERROR: backend at $BACKEND_ORIGIN is not responding." >&2
+    echo "    Launch the app first: ./scripts/dev --launch" >&2
+    exit 2
+fi
+echo "    backend reachable"
+
+# 2. Fire the URL via LaunchServices. This dispatches into the Tauri shell,
+#    which either auto-sends (if both to + body are set) or opens the overlay.
+ENCODED_TO=$(/usr/bin/python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$RECIPIENT")
+ENCODED_BODY=$(/usr/bin/python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$BODY")
+URL="txt://compose?to=${ENCODED_TO}&body=${ENCODED_BODY}"
+echo "    firing: open '$URL'"
+open "$URL"
+
+# 3. Poll /api/search for the body. Google Messages / iMessage sends land
+#    in the message store right after /api/send returns SUCCESS, so the
+#    body being searchable means the whole chain worked.
+echo
+echo "==> Polling /api/search for body (timeout ${TIMEOUT_SECS}s)..."
+DEADLINE=$(( $(date +%s) + TIMEOUT_SECS ))
+ENCODED_SEARCH=$(/usr/bin/python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$BODY")
+while (( $(date +%s) < DEADLINE )); do
+    RESULT=$(curl -sS --max-time 2 "$BACKEND_ORIGIN/api/search?q=${ENCODED_SEARCH}" || true)
+    if echo "$RESULT" | grep -q -- "$BODY"; then
+        echo "    FOUND — message landed in store."
+        echo
+        echo "    (sample hit: $(echo "$RESULT" | head -c 200)...)"
+        exit 0
+    fi
+    sleep 1
+done
+
+echo "    TIMED OUT after ${TIMEOUT_SECS}s — message did not appear in /api/search." >&2
+echo "    Check the app console (Console.app → 'txt') for [deep-link] errors." >&2
+exit 1
