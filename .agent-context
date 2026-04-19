@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Context menu colour match
-Swap hardcoded rgba(11,18,31,.96) for --panel-glass so the menu matches the rest of the dark surface.
+Pigeon-style chrome: no traffic lights + tabs
+Hide macOS traffic lights, add drag region. Persistent tab strip at top with open conversations, Cmd+W close, Cmd+1-9 switch.
 
 ## Current State
 Not started. No work has been done yet.
