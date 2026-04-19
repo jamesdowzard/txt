@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-URL scheme + Shortcuts App Intents
-Register textbridge://compose URL scheme. Add macOS App Intents so Shortcuts.app can send messages through txt. Sidecar Swift binary or Tauri plugin.
+Reactions send + reply threading + image paste
+Send tapbacks via osascript. Reply-to UI citation. Drag-drop and clipboard paste images to iMessage via new /api/send-media iMessage path.
 
 ## Current State
 Not started. No work has been done yet.
