@@ -54,7 +54,7 @@
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["textbridge"]
+        "schemes": ["txt", "textbridge"]
       }
     }
   }

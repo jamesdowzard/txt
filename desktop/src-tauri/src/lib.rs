@@ -2,14 +2,12 @@ mod notifications;
 mod sse;
 
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-#[cfg(not(debug_assertions))]
-use tauri::AppHandle;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_updater::UpdaterExt;
 
@@ -53,12 +51,15 @@ pub fn run() {
     // on macOS it fires the NSAppDelegate URL event which the deep-link
     // plugin already handles. Forward any URL-shaped argv entry to the
     // running instance so the behaviour is consistent across platforms.
+    // Matches both `txt://` (primary) and `textbridge://` (legacy).
     #[cfg(feature = "single-instance")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-        if let Some(url) = args.iter().find(|a| a.starts_with("textbridge://")) {
-            let _ = app.emit(DEEP_LINK_EVENT, url.clone());
-        }
-        if let Some(main) = app.get_webview_window("main") {
+        if let Some(url) = args
+            .iter()
+            .find(|a| a.starts_with("txt://") || a.starts_with("textbridge://"))
+        {
+            dispatch_deep_link(app, url.clone());
+        } else if let Some(main) = app.get_webview_window("main") {
             let _ = main.set_focus();
         }
     }));
@@ -104,12 +105,14 @@ pub fn run() {
                 }
             });
 
-            // Forward textbridge://… URLs to the WebView. Fires on every
-            // macOS NSAppDelegate "open URLs" event (cold launch + hot).
+            // Forward txt://… / textbridge://… URLs to either the background
+            // auto-send path (compose with both `to` + `body`) or the WebView
+            // (everything else — opens overlay, focuses window). Fires on
+            // every macOS NSAppDelegate "open URLs" event (cold + hot).
             let deep_link_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    let _ = deep_link_handle.emit(DEEP_LINK_EVENT, url.to_string());
+                    dispatch_deep_link(&deep_link_handle, url.to_string());
                 }
             });
 
@@ -203,6 +206,163 @@ fn open_conversation_window(
     .build()
     .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// Route a `txt://…` or `textbridge://…` URL to either the background
+/// auto-send path or the WebView. A `compose` URL with both `to` and `body`
+/// is treated as "send this now" and bypasses the WebView entirely — the app
+/// window is NOT brought to the front (Shortcuts-style background send).
+/// Everything else is emitted to the WebView, which opens the compose
+/// overlay and focuses the window.
+fn dispatch_deep_link(app: &AppHandle, raw: String) {
+    let parsed = match url::Url::parse(&raw) {
+        Ok(u) => u,
+        Err(err) => {
+            eprintln!("[deep-link] invalid URL {raw}: {err}");
+            return;
+        }
+    };
+
+    let action = parsed
+        .host_str()
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if action == "compose" {
+        let mut to = String::new();
+        let mut body = String::new();
+        for (k, v) in parsed.query_pairs() {
+            match k.as_ref() {
+                "to" => to = v.into_owned(),
+                "body" => body = v.into_owned(),
+                _ => {}
+            }
+        }
+        if !to.is_empty() && !body.is_empty() {
+            // Background send — don't steal focus. On failure, fall back
+            // to the WebView path so the user still gets the overlay with
+            // their inputs prefilled and can retry.
+            let fallback = app.clone();
+            let raw_for_fallback = raw.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = send_via_handle(&to, &body).await {
+                    eprintln!(
+                        "[deep-link] compose send failed ({err}); falling back to WebView overlay"
+                    );
+                    if let Some(main) = fallback.get_webview_window("main") {
+                        let _ = main.show();
+                        let _ = main.unminimize();
+                        let _ = main.set_focus();
+                    }
+                    let _ = fallback.emit(DEEP_LINK_EVENT, raw_for_fallback);
+                }
+            });
+            return;
+        }
+    }
+
+    // Default: focus the window and hand off to the WebView.
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.unminimize();
+        let _ = main.set_focus();
+    }
+    let _ = app.emit(DEEP_LINK_EVENT, raw);
+}
+
+/// Resolve a recipient handle to a conversation ID and POST the body to
+/// `/api/send`. For `@`-shaped handles we assume iMessage (`imessage:<handle>`);
+/// for everything else we call `/api/new-conversation` to get-or-create a
+/// Google Messages conversation. Errors bubble up to the caller (logged).
+async fn send_via_handle(to: &str, body: &str) -> Result<(), String> {
+    let handle = to.trim();
+    if handle.is_empty() {
+        return Err("empty recipient handle".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
+
+    // Resolve handle → conversation_id.
+    let conversation_id = if handle.contains('@') {
+        // Email → iMessage. The Go backend keys iMessage conversations by
+        // `imessage:<handle>` directly.
+        format!("imessage:{handle}")
+    } else {
+        let digits_only = handle
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '+')
+            .collect::<String>();
+        let is_phone = !digits_only.is_empty()
+            && digits_only
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .count()
+                >= 5;
+
+        if !is_phone {
+            return Err(format!("unrecognised handle shape: {handle}"));
+        }
+
+        // Phone → get-or-create a Google Messages conversation via the
+        // existing resolver. This is the same endpoint the New Message
+        // overlay in the WebView uses.
+        let url = format!("{}/api/new-conversation", BACKEND_ORIGIN);
+        let resp = client
+            .post(&url)
+            .json(&serde_json::json!({ "phone_number": handle }))
+            .send()
+            .await
+            .map_err(|e| format!("POST /api/new-conversation: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "/api/new-conversation returned {status}: {text}"
+            ));
+        }
+
+        let parsed: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("parse /api/new-conversation response: {e}"))?;
+
+        parsed
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                format!(
+                    "/api/new-conversation returned no conversation_id (got {parsed})"
+                )
+            })?
+    };
+
+    // POST the body to /api/send.
+    let url = format!("{}/api/send", BACKEND_ORIGIN);
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "conversation_id": conversation_id,
+            "message": body,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("POST /api/send: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("/api/send returned {status}: {text}"));
+    }
+
+    eprintln!(
+        "[deep-link] compose sent: conversation_id={conversation_id} (handle={handle})"
+    );
     Ok(())
 }
 

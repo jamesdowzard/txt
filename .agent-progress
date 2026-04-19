@@ -1,10 +1,10 @@
-# Agent Progress - detach-upstream
+# Agent Progress - tauri-surface
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T07:34:13Z
+# Created: 2026-04-19T07:54:38Z
 
-feature=detach-upstream
-name=Detach from upstream openmessage
+feature=tauri-surface
+name=URL scheme + Shortcuts App Intents
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T07:34:13Z
+created=2026-04-19T07:54:38Z
