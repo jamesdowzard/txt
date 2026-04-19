@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Reactions send + reply threading + image paste
-Send tapbacks via osascript. Reply-to UI citation. Drag-drop and clipboard paste images to iMessage via new /api/send-media iMessage path.
+Scheduled send + outbox
+New scheduled_messages DB table. Scheduler goroutine polls every 60s. /api/schedule + /api/outbox endpoints. Clock icon + date picker in composer; outbox view.
 
 ## Current State
 Not started. No work has been done yet.
