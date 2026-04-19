@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maxghenis/openmessage/internal/contacts"
 	"github.com/maxghenis/openmessage/internal/db"
 
 	_ "modernc.org/sqlite"
@@ -240,6 +241,90 @@ func TestIMessageImportFromDB_AttributedBodyFallback(t *testing.T) {
 	want := "I can call and setup you up with my claude account when you are ready"
 	if got.Body != want {
 		t.Errorf("outgoing body = %q, want %q", got.Body, want)
+	}
+}
+
+// TestIMessageImportFromDB_ContactsResolution proves that handle IDs get
+// rewritten to the resolved contact name (sender_name on incoming messages,
+// display_name on the conversation) when the IMessage importer is given a
+// Contacts index.
+func TestIMessageImportFromDB_ContactsResolution(t *testing.T) {
+	tempDir := t.TempDir()
+	chatDBPath := filepath.Join(tempDir, "chat.db")
+	chatDB, err := sql.Open("sqlite", chatDBPath)
+	if err != nil {
+		t.Fatalf("open chat.db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
+		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
+		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
+		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
+		`INSERT INTO handle VALUES (1, '+61437590462', '+61437590462', 'iMessage')`,
+		`INSERT INTO chat VALUES (1, 'iMessage;-;+61437590462', '', 45)`,
+		`INSERT INTO chat_handle_join VALUES (1, 1)`,
+		`INSERT INTO chat_message_join VALUES (1, 1)`,
+		`INSERT INTO message VALUES (1, 'msg-from-tommi', 'Step 1 (done) - Purchase laptop', NULL, 700000000000000000, 0, 1)`,
+		// Second chat with an UNKNOWN number — sender_name should fall back
+		// to the chat.db handle (no spurious "" stamping).
+		`INSERT INTO handle VALUES (2, '+61400000000', '+61400000000', 'iMessage')`,
+		`INSERT INTO chat VALUES (2, 'iMessage;-;+61400000000', '', 45)`,
+		`INSERT INTO chat_handle_join VALUES (2, 2)`,
+		`INSERT INTO chat_message_join VALUES (2, 2)`,
+		`INSERT INTO message VALUES (2, 'msg-from-unknown', 'Hello', NULL, 700000000000000001, 0, 2)`,
+	}
+	for _, s := range stmts {
+		if _, err := chatDB.Exec(s); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+	chatDB.Close()
+
+	store, err := db.New(filepath.Join(tempDir, "messages.db"))
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer store.Close()
+
+	idx := contacts.Index{contacts.NormalizePhone("+61437590462"): "Tommi Yick"}
+	im := &IMessage{DBPath: chatDBPath, MyName: "Me", Contacts: idx}
+	if _, err := im.ImportFromDB(store); err != nil {
+		t.Fatalf("ImportFromDB: %v", err)
+	}
+
+	tommiMsg, _ := store.GetMessageByID("imessage:msg-from-tommi")
+	if tommiMsg == nil {
+		t.Fatal("tommi message missing")
+	}
+	if tommiMsg.SenderName != "Tommi Yick" {
+		t.Errorf("tommi sender_name = %q, want 'Tommi Yick'", tommiMsg.SenderName)
+	}
+
+	unknownMsg, _ := store.GetMessageByID("imessage:msg-from-unknown")
+	if unknownMsg == nil {
+		t.Fatal("unknown message missing")
+	}
+	if unknownMsg.SenderName != "+61400000000" {
+		t.Errorf("unknown sender_name = %q, want raw handle", unknownMsg.SenderName)
+	}
+
+	tommiConv, _ := store.GetConversation("imessage:iMessage;-;+61437590462")
+	if tommiConv == nil {
+		t.Fatal("tommi conversation missing")
+	}
+	if tommiConv.Name != "Tommi Yick" {
+		t.Errorf("tommi conv name = %q, want 'Tommi Yick'", tommiConv.Name)
+	}
+
+	unknownConv, _ := store.GetConversation("imessage:iMessage;-;+61400000000")
+	if unknownConv == nil {
+		t.Fatal("unknown conversation missing")
+	}
+	if unknownConv.Name != "+61400000000" {
+		t.Errorf("unknown conv name = %q, want raw handle", unknownConv.Name)
 	}
 }
 

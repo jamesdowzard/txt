@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/maxghenis/openmessage/internal/contacts"
 	"github.com/maxghenis/openmessage/internal/db"
 
 	_ "modernc.org/sqlite"
@@ -31,6 +32,10 @@ type IMessage struct {
 	DBPath string
 	// MyName is the display name for outgoing messages (default "Me").
 	MyName string
+	// Contacts is an optional pre-built phone→name index. If nil,
+	// ImportFromDB loads it from the macOS AddressBook on every call.
+	// Tests inject a fake index to avoid touching the real Contacts DB.
+	Contacts contacts.Index
 }
 
 // ImportFromDB reads the iMessage database and imports all messages.
@@ -48,10 +53,21 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 	defer chatDB.Close()
 	chatDB.SetMaxOpenConns(1)
 
+	// Resolve once per import; an empty/missing AddressBook just means we
+	// fall back to the raw handle IDs (current behaviour).
+	contactIdx := im.Contacts
+	if contactIdx == nil {
+		if loaded, err := contacts.LoadIndex(); err == nil {
+			contactIdx = loaded
+		} else {
+			contactIdx = contacts.Index{}
+		}
+	}
+
 	result := &ImportResult{}
 
 	// Get all chats (conversations)
-	chats, err := im.loadChats(chatDB)
+	chats, err := im.loadChats(chatDB, contactIdx)
 	if err != nil {
 		return nil, fmt.Errorf("load chats: %w", err)
 	}
@@ -74,7 +90,7 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 		result.ConversationsCreated++
 
 		// Import messages for this chat
-		msgs, err := im.loadMessages(chatDB, chat.rowID)
+		msgs, err := im.loadMessages(chatDB, chat.rowID, contactIdx)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("messages for %s: %v", chat.guid, err))
 			continue
@@ -131,7 +147,7 @@ type imessageMessage struct {
 	mimeType    string
 }
 
-func (im *IMessage) loadChats(chatDB *sql.DB) ([]imessageChat, error) {
+func (im *IMessage) loadChats(chatDB *sql.DB, contactIdx contacts.Index) ([]imessageChat, error) {
 	rows, err := chatDB.Query(`
 		SELECT c.ROWID, c.guid, c.display_name, c.style,
 			COALESCE(MAX(m.date), 0) as last_date
@@ -168,6 +184,14 @@ func (im *IMessage) loadChats(chatDB *sql.DB) ([]imessageChat, error) {
 
 	for i := range chats {
 		chats[i].participants = im.loadChatParticipants(chatDB, chats[i].rowID)
+		// Annotate participants with resolved names so they're visible to
+		// downstream consumers (the conversation Participants JSON column
+		// keeps both raw number and resolved name).
+		for j, p := range chats[i].participants {
+			if resolved := contactIdx.Lookup(p["number"]); resolved != "" {
+				chats[i].participants[j]["name"] = resolved
+			}
+		}
 		if chats[i].displayName == "" {
 			var names []string
 			for _, p := range chats[i].participants {
@@ -209,7 +233,7 @@ func (im *IMessage) loadChatParticipants(chatDB *sql.DB, chatRowID int) []map[st
 	return participants
 }
 
-func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessage, error) {
+func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int, contactIdx contacts.Index) ([]imessageMessage, error) {
 	rows, err := chatDB.Query(`
 		SELECT m.guid, m.text, m.attributedBody, m.date, m.is_from_me,
 			COALESCE(h.id, '') as handle_id,
@@ -273,7 +297,11 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		if m.isFromMe {
 			m.senderName = myName
 		} else {
-			m.senderName = handleDisplay
+			if resolved := contactIdx.Lookup(handleID); resolved != "" {
+				m.senderName = resolved
+			} else {
+				m.senderName = handleDisplay
+			}
 			m.senderID = handleID
 		}
 		msgs = append(msgs, m)
