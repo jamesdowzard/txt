@@ -289,7 +289,8 @@ func TestIMessageImportFromDB_ContactsResolution(t *testing.T) {
 	}
 	defer store.Close()
 
-	idx := contacts.Index{contacts.NormalizePhone("+61437590462"): "Tommi Yick"}
+	idx := contacts.NewIndex()
+	idx.Phones[contacts.NormalizePhone("+61437590462")] = "Tommi Yick"
 	im := &IMessage{DBPath: chatDBPath, MyName: "Me", Contacts: idx}
 	if _, err := im.ImportFromDB(store); err != nil {
 		t.Fatalf("ImportFromDB: %v", err)

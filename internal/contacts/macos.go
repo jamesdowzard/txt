@@ -1,7 +1,7 @@
-// Package contacts builds a phone-number → display-name map by reading the
-// macOS Contacts framework's per-source SQLite databases. Used by the
-// iMessage importer so chats and messages render with real names instead
-// of raw phone numbers.
+// Package contacts builds a handle → display-name index by reading the macOS
+// Contacts framework's per-source SQLite databases. Used by the iMessage
+// importer so chats and messages render with real names instead of raw
+// phone numbers or email addresses.
 package contacts
 
 import (
@@ -23,18 +23,26 @@ const macOSContactsRoot = "Library/Application Support/AddressBook/Sources"
 // surviving "+61 437 590 462" / "0437 590 462" / "+61437590462" variations.
 const phoneKeyLen = 9
 
-// Index maps the normalised tail of a phone number to the best display name
-// the local AddressBook had for it.
-type Index map[string]string
+// Index resolves either a phone number or an email address to a display name.
+// Phone keys are NormalizePhone(...); email keys are strings.ToLower(...).
+type Index struct {
+	Phones map[string]string
+	Emails map[string]string
+}
+
+// NewIndex returns an empty, ready-to-write index.
+func NewIndex() Index {
+	return Index{Phones: map[string]string{}, Emails: map[string]string{}}
+}
 
 // LoadIndex walks every AddressBook source under ~/Library/Application
-// Support/AddressBook/Sources and returns a merged phone→name index.
+// Support/AddressBook/Sources and returns a merged handle→name index.
 // Sources that fail to open are skipped silently — a missing or locked
 // source shouldn't crash the importer.
 func LoadIndex() (Index, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("user home: %w", err)
+		return NewIndex(), fmt.Errorf("user home: %w", err)
 	}
 	return loadIndexFrom(filepath.Join(home, macOSContactsRoot))
 }
@@ -44,9 +52,9 @@ func LoadIndex() (Index, error) {
 func loadIndexFrom(sourcesDir string) (Index, error) {
 	matches, err := filepath.Glob(filepath.Join(sourcesDir, "*", "AddressBook-v22.abcddb"))
 	if err != nil {
-		return nil, fmt.Errorf("glob abcddb: %w", err)
+		return NewIndex(), fmt.Errorf("glob abcddb: %w", err)
 	}
-	idx := Index{}
+	idx := NewIndex()
 	for _, dbPath := range matches {
 		readSource(dbPath, idx)
 	}
@@ -59,6 +67,8 @@ func readSource(dbPath string, idx Index) {
 		return
 	}
 	defer db.Close()
+
+	// Phones
 	rows, err := db.Query(`
 		SELECT COALESCE(r.ZFIRSTNAME,''), COALESCE(r.ZLASTNAME,''),
 			COALESCE(r.ZNICKNAME,''), COALESCE(r.ZORGANIZATION,''),
@@ -66,42 +76,77 @@ func readSource(dbPath string, idx Index) {
 		FROM ZABCDPHONENUMBER p
 		JOIN ZABCDRECORD r ON p.ZOWNER = r.Z_PK
 	`)
-	if err != nil {
-		return
+	if err == nil {
+		for rows.Next() {
+			var first, last, nick, org, number string
+			if err := rows.Scan(&first, &last, &nick, &org, &number); err != nil {
+				continue
+			}
+			key := NormalizePhone(number)
+			if key == "" {
+				continue
+			}
+			name := pickDisplayName(first, last, nick, org)
+			if name == "" {
+				continue
+			}
+			if _, ok := idx.Phones[key]; !ok {
+				idx.Phones[key] = name
+			}
+		}
+		rows.Close()
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var first, last, nick, org, number string
-		if err := rows.Scan(&first, &last, &nick, &org, &number); err != nil {
-			continue
+
+	// Emails
+	emailRows, err := db.Query(`
+		SELECT COALESCE(r.ZFIRSTNAME,''), COALESCE(r.ZLASTNAME,''),
+			COALESCE(r.ZNICKNAME,''), COALESCE(r.ZORGANIZATION,''),
+			COALESCE(e.ZADDRESS,'')
+		FROM ZABCDEMAILADDRESS e
+		JOIN ZABCDRECORD r ON e.ZOWNER = r.Z_PK
+	`)
+	if err == nil {
+		for emailRows.Next() {
+			var first, last, nick, org, address string
+			if err := emailRows.Scan(&first, &last, &nick, &org, &address); err != nil {
+				continue
+			}
+			key := normalizeEmail(address)
+			if key == "" {
+				continue
+			}
+			name := pickDisplayName(first, last, nick, org)
+			if name == "" {
+				continue
+			}
+			if _, ok := idx.Emails[key]; !ok {
+				idx.Emails[key] = name
+			}
 		}
-		key := NormalizePhone(number)
-		if key == "" {
-			continue
-		}
-		name := pickDisplayName(first, last, nick, org)
-		if name == "" {
-			continue
-		}
-		// First win (per-source ordering is stable). Don't clobber an
-		// already-mapped name with a blank/org-only entry from a later
-		// source.
-		if _, ok := idx[key]; !ok {
-			idx[key] = name
-		}
+		emailRows.Close()
 	}
 }
 
-// Lookup returns the resolved name for a phone number, or "" if no match.
-func (i Index) Lookup(number string) string {
-	if i == nil {
+// Lookup returns the resolved name for a chat.db handle, or "" if no match.
+// Detects email vs phone by the presence of '@'.
+func (i Index) Lookup(handle string) string {
+	if handle == "" {
 		return ""
 	}
-	key := NormalizePhone(number)
+	if strings.Contains(handle, "@") {
+		if i.Emails == nil {
+			return ""
+		}
+		return i.Emails[normalizeEmail(handle)]
+	}
+	if i.Phones == nil {
+		return ""
+	}
+	key := NormalizePhone(handle)
 	if key == "" {
 		return ""
 	}
-	return i[key]
+	return i.Phones[key]
 }
 
 // NormalizePhone reduces a phone number to its last phoneKeyLen digits,
@@ -119,6 +164,14 @@ func NormalizePhone(s string) string {
 		return ""
 	}
 	return digits[len(digits)-phoneKeyLen:]
+}
+
+func normalizeEmail(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if !strings.Contains(s, "@") {
+		return ""
+	}
+	return s
 }
 
 func pickDisplayName(first, last, nick, org string) string {

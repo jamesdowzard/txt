@@ -56,11 +56,11 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 	// Resolve once per import; an empty/missing AddressBook just means we
 	// fall back to the raw handle IDs (current behaviour).
 	contactIdx := im.Contacts
-	if contactIdx == nil {
+	if contactIdx.Phones == nil && contactIdx.Emails == nil {
 		if loaded, err := contacts.LoadIndex(); err == nil {
 			contactIdx = loaded
 		} else {
-			contactIdx = contacts.Index{}
+			contactIdx = contacts.NewIndex()
 		}
 	}
 

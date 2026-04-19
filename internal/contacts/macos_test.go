@@ -90,13 +90,42 @@ func TestLoadIndexFrom_EmptyDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadIndexFrom: %v", err)
 	}
-	if len(idx) != 0 {
-		t.Errorf("want empty index, got %d entries", len(idx))
+	if len(idx.Phones) != 0 || len(idx.Emails) != 0 {
+		t.Errorf("want empty index, got %d phones / %d emails", len(idx.Phones), len(idx.Emails))
+	}
+}
+
+func TestLoadIndexFrom_Emails(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src-icloud")
+	if err := writeFakeAddressBook(t, filepath.Join(src, "AddressBook-v22.abcddb"), []fakeContact{
+		{first: "Tommi", last: "Yick", email: "tommi.yick@me.com"},
+		{first: "Cameron", last: "Brodie", email: "Cameron.Brodie@cmet.com.au"},
+		{first: "No", last: "Email"}, // skipped — no email or phone
+	}); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	idx, err := loadIndexFrom(root)
+	if err != nil {
+		t.Fatalf("loadIndexFrom: %v", err)
+	}
+	checks := map[string]string{
+		"tommi.yick@me.com":           "Tommi Yick",
+		"TOMMI.YICK@me.com":           "Tommi Yick", // case-insensitive
+		"cameron.brodie@cmet.com.au":  "Cameron Brodie",
+		"unknown@example.com":         "",
+		"":                            "",
+		"not-an-email":                "",
+	}
+	for in, want := range checks {
+		if got := idx.Lookup(in); got != want {
+			t.Errorf("Lookup(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
 type fakeContact struct {
-	first, last, nick, org, number string
+	first, last, nick, org, number, email string
 }
 
 func writeFakeAddressBook(t *testing.T, path string, contacts []fakeContact) error {
@@ -112,6 +141,7 @@ func writeFakeAddressBook(t *testing.T, path string, contacts []fakeContact) err
 	stmts := []string{
 		`CREATE TABLE ZABCDRECORD (Z_PK INTEGER PRIMARY KEY, ZFIRSTNAME TEXT, ZLASTNAME TEXT, ZNICKNAME TEXT, ZORGANIZATION TEXT)`,
 		`CREATE TABLE ZABCDPHONENUMBER (Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZFULLNUMBER TEXT)`,
+		`CREATE TABLE ZABCDEMAILADDRESS (Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZADDRESS TEXT)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -123,9 +153,17 @@ func writeFakeAddressBook(t *testing.T, path string, contacts []fakeContact) err
 			i+1, c.first, c.last, c.nick, c.org); err != nil {
 			return err
 		}
-		if _, err := db.Exec(`INSERT INTO ZABCDPHONENUMBER (ZOWNER, ZFULLNUMBER) VALUES (?,?)`,
-			i+1, c.number); err != nil {
-			return err
+		if c.number != "" {
+			if _, err := db.Exec(`INSERT INTO ZABCDPHONENUMBER (ZOWNER, ZFULLNUMBER) VALUES (?,?)`,
+				i+1, c.number); err != nil {
+				return err
+			}
+		}
+		if c.email != "" {
+			if _, err := db.Exec(`INSERT INTO ZABCDEMAILADDRESS (ZOWNER, ZADDRESS) VALUES (?,?)`,
+				i+1, c.email); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
