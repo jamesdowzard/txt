@@ -91,6 +91,53 @@ func TestPickIMessageBuddy(t *testing.T) {
 	}
 }
 
+func TestBuildReplyAppleScript(t *testing.T) {
+	cases := []struct {
+		name     string
+		target   imessageTarget
+		message  string
+		wantSubs []string
+	}{
+		{
+			name: "1:1 reply resolves chat via participant",
+			target: imessageTarget{
+				buddy:       "+61437590462",
+				service:     "iMessage",
+				replyToGUID: "abc-123",
+			},
+			message: "sure",
+			wantSubs: []string{
+				`service type = iMessage`,
+				`buddy "+61437590462"`,
+				`first chat whose participants contains targetBuddy`,
+				`send "sure" to message id "abc-123" of targetChat`,
+			},
+		},
+		{
+			name: "group reply addresses chat id directly",
+			target: imessageTarget{
+				chatGUID:    "iMessage;+;chat54023337152810558",
+				replyToGUID: "def-456",
+			},
+			message: "agreed",
+			wantSubs: []string{
+				`set targetChat to chat id "iMessage;+;chat54023337152810558"`,
+				`send "agreed" to message id "def-456" of targetChat`,
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := buildReplyAppleScript(c.target, c.message)
+			for _, sub := range c.wantSubs {
+				if !strings.Contains(got, sub) {
+					t.Errorf("script missing %q\n---\n%s", sub, got)
+				}
+			}
+		})
+	}
+}
+
 func TestPickIMessageTarget(t *testing.T) {
 	cases := []struct {
 		name     string
