@@ -412,7 +412,17 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 	mux.HandleFunc("/api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		limit := queryInt(r, "limit", 50)
 		folder := r.URL.Query().Get("folder")
-		convos, err := store.ListConversationsByFolder(folder, limit)
+		includeArchived := queryBool(r, "include_archived", false)
+		var convos []*db.Conversation
+		var err error
+		switch {
+		case folder != "":
+			convos, err = store.ListConversationsByFolder(folder, limit)
+		case includeArchived:
+			convos, err = store.ListConversationsIncludingArchived(limit)
+		default:
+			convos, err = store.ListConversations(limit)
+		}
 		if err != nil {
 			httpError(w, "list conversations: "+err.Error(), 400)
 			return
@@ -611,13 +621,48 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 				httpError(w, "libgm archive: "+err.Error(), 502)
 				return
 			}
-			target := db.FolderArchive
-			if !archived {
-				target = db.FolderInbox
-			}
-			if err := store.SetConversationFolder(convID, target); err != nil {
-				httpError(w, "set folder: "+err.Error(), 500)
+			if err := store.SetConversationArchived(convID, archived); err != nil {
+				httpError(w, "set archived: "+err.Error(), 500)
 				return
+			}
+			convo, err := store.GetConversation(convID)
+			if err != nil {
+				httpError(w, "get conversation: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			writeJSON(w, convo)
+			return
+		}
+		if action == "mute" || action == "unmute" {
+			if r.Method != http.MethodPost {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			if action == "unmute" {
+				if err := store.UnmuteConversation(convID); err != nil {
+					httpError(w, "unmute: "+err.Error(), 500)
+					return
+				}
+			} else {
+				var req struct {
+					DurationMS int64 `json:"duration_ms"`
+				}
+				// Empty bodies are allowed (mute forever).
+				if r.ContentLength > 0 {
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+						httpError(w, "invalid JSON: "+err.Error(), 400)
+						return
+					}
+				}
+				if req.DurationMS < 0 {
+					httpError(w, "duration_ms must be non-negative", 400)
+					return
+				}
+				if err := store.MuteConversationFor(convID, req.DurationMS); err != nil {
+					httpError(w, "mute: "+err.Error(), 500)
+					return
+				}
 			}
 			convo, err := store.GetConversation(convID)
 			if err != nil {
@@ -2284,6 +2329,20 @@ func queryInt64(r *http.Request, key string, defaultVal int64) int64 {
 		return defaultVal
 	}
 	return n
+}
+
+func queryBool(r *http.Request, key string, defaultVal bool) bool {
+	s := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+	if s == "" {
+		return defaultVal
+	}
+	switch s {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return defaultVal
 }
 
 // parseSearchDate accepts either an ISO-8601 day (YYYY-MM-DD) interpreted in
