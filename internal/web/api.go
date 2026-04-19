@@ -1019,6 +1019,70 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		if mime == "" {
 			mime = "application/octet-stream"
 		}
+		if isIMessageConversation(convID) {
+			// Only image types — video/audio send is out of scope.
+			switch mime {
+			case "image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif":
+				// allowed
+			default:
+				httpError(w, "unsupported media type for iMessage: "+mime, 415)
+				return
+			}
+			// Write the file to a temp path. Messages.app reads it
+			// asynchronously, so we must NOT delete it immediately.
+			ext := filepath.Ext(header.Filename)
+			if ext == "" {
+				// Derive extension from MIME type as a fallback.
+				switch mime {
+				case "image/jpeg":
+					ext = ".jpg"
+				case "image/png":
+					ext = ".png"
+				case "image/gif":
+					ext = ".gif"
+				case "image/webp":
+					ext = ".webp"
+				case "image/heic":
+					ext = ".heic"
+				case "image/heif":
+					ext = ".heif"
+				default:
+					ext = ".bin"
+				}
+			}
+			tmpFile, err := os.CreateTemp(os.TempDir(), "txt-imessage-*"+ext)
+			if err != nil {
+				httpError(w, "create temp file: "+err.Error(), 500)
+				return
+			}
+			tmpPath := tmpFile.Name()
+			if _, err := tmpFile.Write(data); err != nil {
+				tmpFile.Close()
+				os.Remove(tmpPath)
+				httpError(w, "write temp file: "+err.Error(), 500)
+				return
+			}
+			tmpFile.Close()
+			// Deferred cleanup — Messages.app reads the file asynchronously.
+			time.AfterFunc(5*time.Minute, func() {
+				if err := os.Remove(tmpPath); err == nil {
+					logger.Info().Str("path", tmpPath).Msg("cleaned up iMessage temp file")
+				}
+			})
+			msg, err := sendIMessageMedia(store, recordOutgoingMessage, convID, tmpPath, mime)
+			if err != nil {
+				httpError(w, "send imessage media: "+err.Error(), 502)
+				return
+			}
+			publishMessages(convID)
+			publishConversations()
+			writeJSON(w, map[string]any{
+				"message_id": msg.MessageID,
+				"status":     "SUCCESS",
+				"success":    true,
+			})
+			return
+		}
 		if isSignalConversation(convID) {
 			msg, err := sendSignalMedia(convID, data, header.Filename, mime, caption, replyToID)
 			switch {
@@ -2337,6 +2401,76 @@ end tell`, message, t.chatGUID)
 	set targetBuddy to buddy %q of targetService
 	send %q to targetBuddy
 end tell`, t.service, t.buddy, message)
+}
+
+// buildSendMediaAppleScript sends a POSIX file via Messages.app.
+// Extracted for testability (see api_imessage_media_test.go).
+func buildSendMediaAppleScript(t imessageTarget, absPath string) string {
+	if t.chatGUID != "" {
+		return fmt.Sprintf(`tell application "Messages"
+	send POSIX file %q to chat id %q
+end tell`, absPath, t.chatGUID)
+	}
+	return fmt.Sprintf(`tell application "Messages"
+	set targetService to first service whose service type = %s
+	set targetBuddy to buddy %q of targetService
+	send POSIX file %q to targetBuddy
+end tell`, t.service, t.buddy, absPath)
+}
+
+// sendIMessageMedia is the media-send peer of sendIMessageText. It drives
+// Messages.app via osascript to deliver an image file, then records the
+// outgoing message locally. absPath must be an absolute path to a file that
+// Messages.app can read; the caller is responsible for keeping it alive long
+// enough for the async send to complete (typically ≥5 minutes).
+func sendIMessageMedia(store *db.Store, recordOutgoing func(*db.Message, string) error, conversationID, absPath, mimeType string) (*db.Message, error) {
+	if conversationID == "" || absPath == "" {
+		return nil, errors.New("conversation_id and absPath are required")
+	}
+	conv, err := store.GetConversation(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation: %w", err)
+	}
+	if conv == nil {
+		return nil, errors.New("conversation not found")
+	}
+	target, err := pickIMessageTarget(conv)
+	if err != nil {
+		return nil, err
+	}
+	// Snapshot 1s before send to absorb clock skew between our process and
+	// Messages.app's chat.db write (same approach as sendIMessageText).
+	sinceMS := time.Now().UnixMilli() - 1000
+	script := buildSendMediaAppleScript(target, absPath)
+	cmd := exec.Command("osascript", "-e", script)
+	out, cmdErr := cmd.CombinedOutput()
+	if cmdErr != nil {
+		return nil, fmt.Errorf("osascript: %v: %s", cmdErr, strings.TrimSpace(string(out)))
+	}
+	chatGUID := strings.TrimPrefix(conversationID, "imessage:")
+	canonicalGUID := pollForCanonicalGUID(chatGUID, sinceMS)
+	now := time.Now().UnixMilli()
+	msg := &db.Message{
+		ConversationID: conversationID,
+		SenderName:     "Me",
+		Body:           "",
+		TimestampMS:    now,
+		Status:         "delivered",
+		IsFromMe:       true,
+		SourcePlatform: "imessage",
+		MediaID:        absPath,
+		MimeType:       mimeType,
+	}
+	if canonicalGUID != "" {
+		msg.MessageID = "imessage:" + canonicalGUID
+		msg.SourceID = canonicalGUID
+	} else {
+		msg.MessageID = fmt.Sprintf("imessage-pending:%s:%d", conversationID, now)
+	}
+	if err := recordOutgoing(msg, ""); err != nil {
+		return nil, fmt.Errorf("local store: %w", err)
+	}
+	return msg, nil
 }
 
 // buildReplyAppleScript returns the AppleScript used to send a threaded
