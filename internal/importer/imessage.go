@@ -1,7 +1,9 @@
 package importer
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -199,7 +201,7 @@ func (im *IMessage) loadChatParticipants(chatDB *sql.DB, chatRowID int) []map[st
 
 func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessage, error) {
 	rows, err := chatDB.Query(`
-		SELECT m.guid, m.text, m.date, m.is_from_me,
+		SELECT m.guid, m.text, m.attributedBody, m.date, m.is_from_me,
 			COALESCE(h.id, '') as handle_id,
 			COALESCE(h.uncanonicalized_id, h.id, '') as handle_display
 		FROM message m
@@ -223,8 +225,16 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		var m imessageMessage
 		var date int64
 		var handleID, handleDisplay string
-		if err := rows.Scan(&m.guid, &m.text, &date, &m.isFromMe, &handleID, &handleDisplay); err != nil {
+		var text sql.NullString
+		var attributedBody []byte
+		if err := rows.Scan(&m.guid, &text, &attributedBody, &date, &m.isFromMe, &handleID, &handleDisplay); err != nil {
 			continue
+		}
+		if text.Valid {
+			m.text = text.String
+		}
+		if m.text == "" {
+			m.text = extractAttributedBodyText(attributedBody)
 		}
 		if m.text == "" {
 			continue
@@ -239,6 +249,59 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+// extractAttributedBodyText pulls the UTF-8 body out of a macOS
+// NSAttributedString typedstream blob (message.attributedBody).
+//
+// Modern Messages.app (macOS 11+) leaves message.text NULL and stores
+// the body inside the NSKeyedArchiver typedstream blob. The blob embeds
+// the plaintext after the NSString class declaration:
+//
+//	...NSString\x01\x94\x84\x01\x2b<length><utf-8 bytes>...
+//
+// where <length> is either a single byte (< 0x81), or 0x81 followed by
+// a 2-byte little-endian length, or 0x82 followed by a 4-byte little-endian.
+// Returns "" when the blob is missing the marker (sticker/attachment-only
+// messages have no text payload).
+func extractAttributedBodyText(blob []byte) string {
+	if len(blob) == 0 {
+		return ""
+	}
+	nsIdx := bytes.Index(blob, []byte("NSString"))
+	if nsIdx < 0 {
+		return ""
+	}
+	relIdx := bytes.Index(blob[nsIdx:], []byte{0x01, 0x2b})
+	if relIdx < 0 {
+		return ""
+	}
+	pos := nsIdx + relIdx + 2
+	if pos >= len(blob) {
+		return ""
+	}
+	var length int
+	switch blob[pos] {
+	case 0x81:
+		if pos+3 > len(blob) {
+			return ""
+		}
+		length = int(binary.LittleEndian.Uint16(blob[pos+1 : pos+3]))
+		pos += 3
+	case 0x82:
+		if pos+5 > len(blob) {
+			return ""
+		}
+		length = int(binary.LittleEndian.Uint32(blob[pos+1 : pos+5]))
+		pos += 5
+	default:
+		length = int(blob[pos])
+		pos++
+	}
+	if length <= 0 || pos+length > len(blob) {
+		return ""
+	}
+	return string(blob[pos : pos+length])
 }
 
 // coreDataToMS converts a macOS Core Data timestamp (nanoseconds since 2001-01-01) to milliseconds since Unix epoch.
