@@ -144,26 +144,31 @@ func (im *IMessage) loadChats(chatDB *sql.DB) ([]imessageChat, error) {
 		}
 		c.isGroup = style == 43 // iMessage group chat style
 		c.lastMessageTS = coreDataToMS(lastDate)
+		chats = append(chats, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Drain + close before issuing nested queries: chatDB has SetMaxOpenConns(1)
+	// (chat.db SQLite quirk), so loadChatParticipants would block forever
+	// waiting for the connection still held by `rows`.
+	rows.Close()
 
-		// Load participants
-		c.participants = im.loadChatParticipants(chatDB, c.rowID)
-
-		// Derive name if empty
-		if c.displayName == "" {
+	for i := range chats {
+		chats[i].participants = im.loadChatParticipants(chatDB, chats[i].rowID)
+		if chats[i].displayName == "" {
 			var names []string
-			for _, p := range c.participants {
+			for _, p := range chats[i].participants {
 				if n := p["name"]; n != "" {
 					names = append(names, n)
 				} else if n := p["number"]; n != "" {
 					names = append(names, n)
 				}
 			}
-			c.displayName = strings.Join(names, ", ")
+			chats[i].displayName = strings.Join(names, ", ")
 		}
-
-		chats = append(chats, c)
 	}
-	return chats, rows.Err()
+	return chats, nil
 }
 
 func (im *IMessage) loadChatParticipants(chatDB *sql.DB, chatRowID int) []map[string]string {
