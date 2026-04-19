@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-VIP contacts
-Add is_vip column + API endpoints + sidebar VIP section for starred conversations (issue #15 item #5a)
+Menu-bar popover
+NSStatusItem tray with VIP list + unread badge + quick compose (issue #20 item 1, #15 item #5b)
 
 ## Current State
 Not started. No work has been done yet.

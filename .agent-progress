@@ -1,10 +1,10 @@
-# Agent Progress - vip-contacts
+# Agent Progress - menu-bar-popover
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T10:35:43Z
+# Created: 2026-04-19T11:21:50Z
 
-feature=vip-contacts
-name=VIP contacts
+feature=menu-bar-popover
+name=Menu-bar popover
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T10:35:43Z
+created=2026-04-19T11:21:50Z

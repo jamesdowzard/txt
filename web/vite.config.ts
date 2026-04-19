@@ -13,7 +13,10 @@ export default defineConfig({
     outDir: resolve(__dirname, '../internal/web/static/dist'),
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(__dirname, 'index.html'),
+      input: {
+        index: resolve(__dirname, 'index.html'),
+        popover: resolve(__dirname, 'popover.html'),
+      },
     },
   },
   server: {

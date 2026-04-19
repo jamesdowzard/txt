@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=320, initial-scale=1" />
+<title>txt</title>
+<link rel="icon" href="/favicon.svg" />
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg: #1a1a1a;
+    --fg: #eee;
+    --muted: #888;
+    --accent: #4c8bf5;
+    --border: #2a2a2a;
+    --row-hover: #252525;
+    --row-selected: #2e3a52;
+    --input-bg: #0f0f0f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f5f5;
+      --fg: #111;
+      --muted: #666;
+      --accent: #0a7dff;
+      --border: #ddd;
+      --row-hover: #ebebeb;
+      --row-selected: #d2e1fb;
+      --input-bg: #fff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .title { font-weight: 600; }
+  .unread {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  #list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+  .row {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .row:hover { background: var(--row-hover); }
+  .row.selected { background: var(--row-selected); }
+  .row-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row-count {
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 8px;
+  }
+  .empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .status {
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  .compose {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--border);
+    padding: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    background: var(--input-bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+    font: inherit;
+    height: 48px;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: 0;
+    border-radius: 4px;
+    padding: 0 12px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:disabled {
+    background: #555;
+    color: #aaa;
+    cursor: not-allowed;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="title">VIPs</div>
+    <div class="unread" id="unread"></div>
+  </header>
+  <div id="list"><div class="empty">Loading…</div></div>
+  <div class="status" id="status"></div>
+  <div class="compose">
+    <textarea id="body" placeholder="Select a VIP to reply…" disabled></textarea>
+    <button id="send" disabled>Send</button>
+  </div>
+  <script>
+  (function () {
+    "use strict";
+    const listEl = document.getElementById("list");
+    const unreadEl = document.getElementById("unread");
+    const bodyEl = document.getElementById("body");
+    const sendEl = document.getElementById("send");
+    const statusEl = document.getElementById("status");
+    let vips = [];
+    let selectedId = null;
+    let selectedName = "";
+
+    function renderList() {
+      if (vips.length === 0) {
+        listEl.innerHTML =
+          '<div class="empty">No VIPs yet. Star a conversation from the main window.</div>';
+        return;
+      }
+      listEl.innerHTML = "";
+      vips.forEach(function (v) {
+        const row = document.createElement("div");
+        row.className = "row" + (v.ConversationID === selectedId ? " selected" : "");
+        row.dataset.id = v.ConversationID;
+        const name = document.createElement("div");
+        name.className = "row-name";
+        name.textContent = v.Name || v.ConversationID;
+        row.appendChild(name);
+        if (v.UnreadCount > 0) {
+          const badge = document.createElement("div");
+          badge.className = "row-count";
+          badge.textContent = String(v.UnreadCount);
+          row.appendChild(badge);
+        }
+        row.addEventListener("click", function () {
+          selectedId = v.ConversationID;
+          selectedName = v.Name || v.ConversationID;
+          renderList();
+          bodyEl.disabled = false;
+          sendEl.disabled = bodyEl.value.trim().length === 0;
+          bodyEl.focus();
+          bodyEl.placeholder = "Reply to " + selectedName + "…";
+        });
+        listEl.appendChild(row);
+      });
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch("/api/conversations?limit=500");
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const all = await resp.json();
+        vips = (all || []).filter(function (c) {
+          return c.IsVIP === true || c.is_vip === true;
+        });
+        const totalUnread = (all || []).reduce(function (s, c) {
+          return s + (c.UnreadCount || 0);
+        }, 0);
+        unreadEl.textContent = totalUnread > 0 ? String(totalUnread) : "";
+        renderList();
+      } catch (err) {
+        listEl.innerHTML =
+          '<div class="empty">Failed to load: ' + err.message + "</div>";
+      }
+    }
+
+    async function send() {
+      if (!selectedId) return;
+      const message = bodyEl.value.trim();
+      if (!message) return;
+      sendEl.disabled = true;
+      bodyEl.disabled = true;
+      statusEl.textContent = "Sending…";
+      try {
+        const resp = await fetch("/api/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: selectedId, message: message }),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || "HTTP " + resp.status);
+        }
+        bodyEl.value = "";
+        statusEl.textContent = "Sent.";
+        setTimeout(function () {
+          statusEl.textContent = "";
+        }, 1500);
+        load();
+      } catch (err) {
+        statusEl.textContent = "Send failed: " + err.message;
+      } finally {
+        bodyEl.disabled = false;
+        sendEl.disabled = bodyEl.value.trim().length === 0;
+      }
+    }
+
+    bodyEl.addEventListener("input", function () {
+      sendEl.disabled = !selectedId || bodyEl.value.trim().length === 0;
+    });
+    sendEl.addEventListener("click", send);
+    bodyEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    load();
+    setInterval(load, 10000);
+  })();
+  </script>
+</body>
+</html>
