@@ -8,7 +8,7 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname, snoozed_until`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname, snoozed_until, archived_at`
 
 const (
 	NotificationModeAll      = "all"
@@ -109,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +266,37 @@ func (s *Store) SetConversationPinned(id string, pinned bool) error {
 	return err
 }
 
+// SetConversationArchived sets the local archived_at timestamp. When archived,
+// archived_at is the current unix second and folder moves to 'archive'; when
+// un-archived both archived_at and folder reset (inbox). Note: the libgm sync
+// for Google Messages archive state is handled by the caller in api.go — this
+// method updates the local DB only.
+func (s *Store) SetConversationArchived(id string, archived bool) error {
+	var ts int64
+	folder := FolderInbox
+	if archived {
+		ts = time.Now().Unix()
+		folder = FolderArchive
+	}
+	_, err := s.db.Exec(`UPDATE conversations SET archived_at = ?, folder = ? WHERE conversation_id = ?`, ts, folder, id)
+	return err
+}
+
+// MuteConversationFor mutes a conversation for durationMS milliseconds from
+// now. Pass durationMS=0 to mute indefinitely ("until I unmute").
+func (s *Store) MuteConversationFor(id string, durationMS int64) error {
+	var until int64
+	if durationMS > 0 {
+		until = time.Now().Unix() + (durationMS / 1000)
+	}
+	return s.SetConversationMute(id, until)
+}
+
+// UnmuteConversation clears mute and resets the notification mode to 'all'.
+func (s *Store) UnmuteConversation(id string) error {
+	return s.SetConversationNotificationMode(id, NotificationModeAll)
+}
+
 // SetConversationSnooze sets snoozed_until to the given unix second, hiding
 // the conversation from list queries until the time passes. Pass 0 to
 // unsnooze immediately.
@@ -298,7 +329,8 @@ func (s *Store) SetConversationFolder(id, folder string) error {
 }
 
 // ListConversationsByFolder returns conversations in the given folder, ordered
-// by last_message_ts DESC, up to limit. Pass "" for folder to return all.
+// by last_message_ts DESC, up to limit. Pass "" for folder to return all
+// non-archived conversations.
 func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversation, error) {
 	if folder == "" {
 		return s.ListConversations(limit)
@@ -324,12 +356,30 @@ func (s *Store) ListConversationsByFolder(folder string, limit int) ([]*Conversa
 	return scanConversations(rows)
 }
 
+// ListConversations returns non-archived conversations. Use
+// ListConversationsIncludingArchived (or ListConversationsByFolder with
+// folder="archive") to include archived rows.
 func (s *Store) ListConversations(limit int) ([]*Conversation, error) {
+	return s.listConversations(limit, false)
+}
+
+// ListConversationsIncludingArchived returns all conversations regardless of
+// archived_at state. Used by the sidebar's "show archived" toggle.
+func (s *Store) ListConversationsIncludingArchived(limit int) ([]*Conversation, error) {
+	return s.listConversations(limit, true)
+}
+
+func (s *Store) listConversations(limit int, includeArchived bool) ([]*Conversation, error) {
 	now := time.Now().Unix()
+	archivedClause := "AND archived_at = 0 "
+	if includeArchived {
+		archivedClause = ""
+	}
 	rows, err := s.db.Query(`
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE (snoozed_until = 0 OR snoozed_until <= ?)
+		  `+archivedClause+`
 		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.conversation_id)
 		ORDER BY pinned_at DESC, last_message_ts DESC
 		LIMIT ?
@@ -408,7 +458,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -422,7 +472,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

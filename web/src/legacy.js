@@ -2200,7 +2200,21 @@
         action: 'leave-whatsapp-group',
       });
     }
+    // Conversation JSON mixes Go PascalCase (untagged) and snake_case (tagged)
+    // — read both so context menu reflects the real state regardless of shape.
+    const isPinned = (convo.PinnedAt || convo.pinned_at || 0) > 0;
+    const archivedAt = convo.ArchivedAt || convo.archived_at || 0;
+    const isArchived = archivedAt > 0 || (convo.Folder || convo.folder || '') === FOLDER_ARCHIVE;
     items.push(
+      { type: 'divider' },
+      {
+        label: isPinned ? 'Unpin conversation' : 'Pin conversation',
+        action: isPinned ? 'unpin-conversation' : 'pin-conversation',
+      },
+      {
+        label: isArchived ? 'Unarchive conversation' : 'Archive conversation',
+        action: isArchived ? 'unarchive-conversation' : 'archive-conversation',
+      },
       { type: 'divider' },
       {
         label: (convo.UnreadCount || 0) > 0 ? 'Mark as read' : 'Mark as unread',
@@ -4866,6 +4880,14 @@
             await setConversationMute(context.conversation, until);
             const msg = until === 0 ? 'Muted until unmuted.' : `Muted until ${new Date(until * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
             showThreadFeedback(msg);
+            return;
+          }
+          if (action === 'pin-conversation' || action === 'unpin-conversation') {
+            await pinConversation(context.conversation, action === 'pin-conversation');
+            return;
+          }
+          if (action === 'archive-conversation' || action === 'unarchive-conversation') {
+            await archiveConversation(context.conversation, action === 'archive-conversation');
             return;
           }
         }
