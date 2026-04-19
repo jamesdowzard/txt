@@ -18,6 +18,12 @@ import (
 // macOS Core Data epoch: 2001-01-01 00:00:00 UTC in Unix seconds.
 const coreDataEpoch = 978307200
 
+// iMessageAttachmentsRoot is where Messages.app stores attachment files.
+// chat.db records filenames with the literal "~/" prefix; the importer
+// normalises them to paths relative to this root so the runtime home dir
+// doesn't bake into messages.db.
+const iMessageAttachmentsRoot = "Library/Messages/Attachments"
+
 // IMessage imports messages from the macOS Messages chat.db.
 // Requires Full Disk Access to read ~/Library/Messages/chat.db.
 type IMessage struct {
@@ -84,6 +90,8 @@ func (im *IMessage) ImportFromDB(store *db.Store) (*ImportResult, error) {
 				TimestampMS:    m.timestampMS,
 				Status:         "delivered",
 				IsFromMe:       m.isFromMe,
+				MediaID:        m.mediaPath,
+				MimeType:       m.mimeType,
 				SourcePlatform: "imessage",
 				SourceID:       m.guid,
 			}
@@ -119,6 +127,8 @@ type imessageMessage struct {
 	senderID    string
 	timestampMS int64
 	isFromMe    bool
+	mediaPath   string // relative to ~/Library/Messages/Attachments
+	mimeType    string
 }
 
 func (im *IMessage) loadChats(chatDB *sql.DB) ([]imessageChat, error) {
@@ -203,7 +213,15 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 	rows, err := chatDB.Query(`
 		SELECT m.guid, m.text, m.attributedBody, m.date, m.is_from_me,
 			COALESCE(h.id, '') as handle_id,
-			COALESCE(h.uncanonicalized_id, h.id, '') as handle_display
+			COALESCE(h.uncanonicalized_id, h.id, '') as handle_display,
+			(SELECT a.filename FROM attachment a
+			 JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
+			 WHERE maj.message_id = m.ROWID AND a.hide_attachment = 0
+			 ORDER BY a.ROWID LIMIT 1) as attachment_filename,
+			(SELECT a.mime_type FROM attachment a
+			 JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
+			 WHERE maj.message_id = m.ROWID AND a.hide_attachment = 0
+			 ORDER BY a.ROWID LIMIT 1) as attachment_mime
 		FROM message m
 		JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
 		LEFT JOIN handle h ON m.handle_id = h.ROWID
@@ -225,9 +243,9 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		var m imessageMessage
 		var date int64
 		var handleID, handleDisplay string
-		var text sql.NullString
+		var text, attachmentName, attachmentMime sql.NullString
 		var attributedBody []byte
-		if err := rows.Scan(&m.guid, &text, &attributedBody, &date, &m.isFromMe, &handleID, &handleDisplay); err != nil {
+		if err := rows.Scan(&m.guid, &text, &attributedBody, &date, &m.isFromMe, &handleID, &handleDisplay, &attachmentName, &attachmentMime); err != nil {
 			continue
 		}
 		if text.Valid {
@@ -236,7 +254,19 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		if m.text == "" {
 			m.text = extractAttributedBodyText(attributedBody)
 		}
-		if m.text == "" {
+		// "\ufffc" is the Unicode object-replacement char Messages stamps in
+		// the body of an attachment-only message. Strip it so the UI doesn't
+		// render a stray placeholder next to the attachment.
+		if m.text == "\ufffc" {
+			m.text = ""
+		}
+		if attachmentName.Valid {
+			m.mediaPath = normaliseAttachmentPath(attachmentName.String)
+		}
+		if attachmentMime.Valid {
+			m.mimeType = attachmentMime.String
+		}
+		if m.text == "" && m.mediaPath == "" {
 			continue
 		}
 		m.timestampMS = coreDataToMS(date)
@@ -249,6 +279,33 @@ func (im *IMessage) loadMessages(chatDB *sql.DB, chatRowID int) ([]imessageMessa
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+// normaliseAttachmentPath converts an attachment.filename value from chat.db
+// into a path relative to ~/Library/Messages/Attachments, so messages.db is
+// portable across home dirs and the /api/media/ handler can re-anchor it.
+// Returns "" for paths outside the attachments root or containing ".."
+// segments, so a hostile chat.db can't trick the server into reading
+// arbitrary files.
+func normaliseAttachmentPath(filename string) string {
+	if filename == "" {
+		return ""
+	}
+	p := filename
+	if strings.HasPrefix(p, "~/") {
+		p = p[2:]
+	} else if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home+"/") {
+		p = p[len(home)+1:]
+	}
+	prefix := iMessageAttachmentsRoot + "/"
+	if !strings.HasPrefix(p, prefix) {
+		return ""
+	}
+	rel := strings.TrimPrefix(p, prefix)
+	if rel == "" || strings.Contains(rel, "..") {
+		return ""
+	}
+	return rel
 }
 
 // extractAttributedBodyText pulls the UTF-8 body out of a macOS

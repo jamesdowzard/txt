@@ -9,6 +9,8 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1087,6 +1089,12 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			w.Write(data)
 			return
 		}
+		if msg.SourcePlatform == "imessage" {
+			if err := serveIMessageAttachment(w, msg); err != nil {
+				httpError(w, err.Error(), 404)
+			}
+			return
+		}
 		if msg.SourcePlatform == "signal" || strings.HasPrefix(msg.MessageID, "signal:") || strings.HasPrefix(msg.MediaID, "signalatt:") {
 			if opts.DownloadSignalMedia == nil {
 				httpError(w, "signal media not available", 404)
@@ -2018,6 +2026,42 @@ func writeSSEEvent(w http.ResponseWriter, evt StreamEvent) error {
 	}
 	_, err = io.WriteString(w, "\n\n")
 	return err
+}
+
+// serveIMessageAttachment streams a Messages.app attachment file referenced
+// by the message's MediaID. MediaID is a path relative to
+// ~/Library/Messages/Attachments (the importer normalises it to that form).
+// Resolves the cleaned absolute path and refuses to serve anything that
+// doesn't live inside the attachments root, so a tampered messages.db row
+// can't read arbitrary files.
+func serveIMessageAttachment(w http.ResponseWriter, msg *db.Message) error {
+	if msg.MediaID == "" {
+		return errors.New("no attachment for this message")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+	root := filepath.Join(home, "Library/Messages/Attachments")
+	full := filepath.Clean(filepath.Join(root, msg.MediaID))
+	if !strings.HasPrefix(full, root+string(filepath.Separator)) {
+		return errors.New("attachment path escapes root")
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return fmt.Errorf("open attachment: %w", err)
+	}
+	defer f.Close()
+	mimeType := msg.MimeType
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if _, err := io.Copy(w, f); err != nil {
+		return fmt.Errorf("stream attachment: %w", err)
+	}
+	return nil
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

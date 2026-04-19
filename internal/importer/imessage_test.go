@@ -3,6 +3,7 @@ package importer
 import (
 	"database/sql"
 	"encoding/binary"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,6 +56,8 @@ func TestIMessageImportFromDB_DoesNotDeadlock(t *testing.T) {
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
 		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
+		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
 
 		`INSERT INTO handle VALUES (1, '+15551234567', '+1 555 1234567', 'iMessage')`,
 		`INSERT INTO chat VALUES (1, 'iMessage;-;+15551234567', '', 45)`,
@@ -140,6 +143,26 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+func TestNormaliseAttachmentPath(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"~/Library/Messages/Attachments/0f/15/UUID/IMG.heic", "0f/15/UUID/IMG.heic"},
+		{filepath.Join(home, "Library/Messages/Attachments/0f/15/UUID/IMG.heic"), "0f/15/UUID/IMG.heic"},
+		{"/tmp/elsewhere.png", ""},
+		{"~/Library/Messages/Attachments/../../../etc/passwd", ""},
+		{"~/Library/Messages/Attachments/", ""},
+	}
+	for _, c := range cases {
+		got := normaliseAttachmentPath(c.in)
+		if got != c.want {
+			t.Errorf("normaliseAttachmentPath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestIMessageImportFromDB_AttributedBodyFallback proves loadMessages reads
 // message.attributedBody when message.text is NULL (the modern Messages.app
 // layout). Pre-fix: rows with NULL text were silently dropped.
@@ -157,6 +180,8 @@ func TestIMessageImportFromDB_AttributedBodyFallback(t *testing.T) {
 		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
 		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
 		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
+		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
 		`INSERT INTO handle VALUES (1, '+15551234567', '+1 555 1234567', 'iMessage')`,
 		`INSERT INTO chat VALUES (1, 'iMessage;-;+15551234567', '', 45)`,
 		`INSERT INTO chat_handle_join VALUES (1, 1)`,
@@ -215,5 +240,100 @@ func TestIMessageImportFromDB_AttributedBodyFallback(t *testing.T) {
 	want := "I can call and setup you up with my claude account when you are ready"
 	if got.Body != want {
 		t.Errorf("outgoing body = %q, want %q", got.Body, want)
+	}
+}
+
+// TestIMessageImportFromDB_AttachmentMetadata proves loadMessages joins the
+// attachment + message_attachment_join tables and stamps MediaID/MimeType on
+// the imported message. Attachment-only rows ("\ufffc" body) keep MediaID and
+// drop the placeholder body so the UI just renders the image.
+func TestIMessageImportFromDB_AttachmentMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	chatDBPath := filepath.Join(tempDir, "chat.db")
+
+	chatDB, err := sql.Open("sqlite", chatDBPath)
+	if err != nil {
+		t.Fatalf("open chat.db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
+		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
+		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT, hide_attachment INTEGER DEFAULT 0)`,
+		`CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`,
+		`INSERT INTO handle VALUES (1, '+15551234567', '+1 555 1234567', 'iMessage')`,
+		`INSERT INTO chat VALUES (1, 'iMessage;-;+15551234567', '', 45)`,
+		`INSERT INTO chat_handle_join VALUES (1, 1)`,
+		`INSERT INTO chat_message_join VALUES (1, 1)`,
+		`INSERT INTO chat_message_join VALUES (1, 2)`,
+		`INSERT INTO chat_message_join VALUES (1, 3)`,
+		// Image-only message from Tommi (object-replacement char in body)
+		`INSERT INTO message VALUES (1, 'msg-img-only', char(0xfffc), NULL, 700000000000000000, 0, 1)`,
+		`INSERT INTO attachment VALUES (10, 'att-1', '~/Library/Messages/Attachments/0f/15/UUID/IMG_9046.heic', 'image/heic', 0)`,
+		`INSERT INTO message_attachment_join VALUES (1, 10)`,
+		// Text-with-image message
+		`INSERT INTO message VALUES (2, 'msg-text-img', 'Check this out', NULL, 700000000000000001, 1, 1)`,
+		`INSERT INTO attachment VALUES (11, 'att-2', '~/Library/Messages/Attachments/aa/bb/UUID2/snap.png', 'image/png', 0)`,
+		`INSERT INTO message_attachment_join VALUES (2, 11)`,
+		// Hidden attachment (e.g. Memoji metadata) → MediaID should stay empty
+		`INSERT INTO message VALUES (3, 'msg-hidden-att', 'Hi', NULL, 700000000000000002, 0, 1)`,
+		`INSERT INTO attachment VALUES (12, 'att-3', '~/Library/Messages/Attachments/cc/dd/UUID3/hidden.dat', 'application/octet-stream', 1)`,
+		`INSERT INTO message_attachment_join VALUES (3, 12)`,
+	}
+	for _, s := range stmts {
+		if _, err := chatDB.Exec(s); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+	chatDB.Close()
+
+	store, err := db.New(filepath.Join(tempDir, "messages.db"))
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	defer store.Close()
+
+	im := &IMessage{DBPath: chatDBPath, MyName: "Me"}
+	result, err := im.ImportFromDB(store)
+	if err != nil {
+		t.Fatalf("ImportFromDB: %v", err)
+	}
+	if result.MessagesImported != 3 {
+		t.Errorf("MessagesImported = %d, want 3", result.MessagesImported)
+	}
+
+	imgOnly, _ := store.GetMessageByID("imessage:msg-img-only")
+	if imgOnly == nil {
+		t.Fatal("img-only message not imported")
+	}
+	if imgOnly.Body != "" {
+		t.Errorf("img-only body = %q, want empty (placeholder stripped)", imgOnly.Body)
+	}
+	if want := "0f/15/UUID/IMG_9046.heic"; imgOnly.MediaID != want {
+		t.Errorf("img-only MediaID = %q, want %q", imgOnly.MediaID, want)
+	}
+	if imgOnly.MimeType != "image/heic" {
+		t.Errorf("img-only MimeType = %q, want image/heic", imgOnly.MimeType)
+	}
+
+	textImg, _ := store.GetMessageByID("imessage:msg-text-img")
+	if textImg == nil {
+		t.Fatal("text-with-image not imported")
+	}
+	if textImg.Body != "Check this out" {
+		t.Errorf("text-img body = %q, want 'Check this out'", textImg.Body)
+	}
+	if textImg.MediaID == "" || textImg.MimeType != "image/png" {
+		t.Errorf("text-img media metadata missing: id=%q mime=%q", textImg.MediaID, textImg.MimeType)
+	}
+
+	hidden, _ := store.GetMessageByID("imessage:msg-hidden-att")
+	if hidden == nil {
+		t.Fatal("hidden-attachment message not imported")
+	}
+	if hidden.MediaID != "" {
+		t.Errorf("hidden attachment leaked into MediaID: %q", hidden.MediaID)
 	}
 }
