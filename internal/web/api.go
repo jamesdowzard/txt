@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -278,6 +279,13 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		}
 		conv, err := store.GetConversation(conversationID)
 		return err == nil && conv != nil && conv.SourcePlatform == "signal"
+	}
+	isIMessageConversation := func(conversationID string) bool {
+		if strings.HasPrefix(conversationID, "imessage:") {
+			return true
+		}
+		conv, err := store.GetConversation(conversationID)
+		return err == nil && conv != nil && conv.SourcePlatform == "imessage"
 	}
 	var (
 		errWhatsAppTextUnavailable  = errors.New("WhatsApp sending is not available")
@@ -829,6 +837,21 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 				return
 			case err != nil:
 				httpError(w, err.Error(), 502)
+				return
+			}
+			publishMessages(req.ConversationID)
+			publishConversations()
+			writeJSON(w, map[string]any{
+				"message_id": msg.MessageID,
+				"status":     "SUCCESS",
+				"success":    true,
+			})
+			return
+		}
+		if isIMessageConversation(req.ConversationID) {
+			msg, err := sendIMessageText(store, recordOutgoingMessage, req.ConversationID, req.Message)
+			if err != nil {
+				httpError(w, "send imessage: "+err.Error(), 502)
 				return
 			}
 			publishMessages(req.ConversationID)
@@ -2060,6 +2083,92 @@ func serveIMessageAttachment(w http.ResponseWriter, msg *db.Message) error {
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	if _, err := io.Copy(w, f); err != nil {
 		return fmt.Errorf("stream attachment: %w", err)
+	}
+	return nil
+}
+
+// sendIMessageText sends an outgoing iMessage by driving Messages.app via
+// AppleScript. The conversation participants are looked up from messages.db
+// (populated by the iMessage importer) and the first participant's handle
+// is used as the buddy address. Persists the outgoing message locally so
+// the UI shows it immediately; the next sync cycle will pick up the
+// canonical row from chat.db and dedupe via SourceID.
+func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) error, conversationID, message string) (*db.Message, error) {
+	if conversationID == "" || strings.TrimSpace(message) == "" {
+		return nil, errors.New("conversation_id and message are required")
+	}
+	conv, err := store.GetConversation(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation: %w", err)
+	}
+	if conv == nil {
+		return nil, errors.New("conversation not found")
+	}
+	buddy, service, err := pickIMessageBuddy(conv)
+	if err != nil {
+		return nil, err
+	}
+	if err := runAppleScriptSend(buddy, service, message); err != nil {
+		return nil, err
+	}
+	now := time.Now().UnixMilli()
+	msg := &db.Message{
+		MessageID:      fmt.Sprintf("imessage-pending:%s:%d", conversationID, now),
+		ConversationID: conversationID,
+		SenderName:     "Me",
+		Body:           message,
+		TimestampMS:    now,
+		Status:         "delivered",
+		IsFromMe:       true,
+		SourcePlatform: "imessage",
+	}
+	if err := recordOutgoing(msg, ""); err != nil {
+		return nil, fmt.Errorf("local store: %w", err)
+	}
+	return msg, nil
+}
+
+// pickIMessageBuddy reads the first participant from a conversation's
+// Participants JSON column. Returns the handle and the Messages service to
+// target ('iMessage' or 'SMS'). Group chats aren't supported yet — we'd
+// need the chat.db chat GUID, not a single buddy address.
+func pickIMessageBuddy(conv *db.Conversation) (string, string, error) {
+	if conv.IsGroup {
+		return "", "", errors.New("group iMessage send not supported yet")
+	}
+	var parts []map[string]string
+	if err := json.Unmarshal([]byte(conv.Participants), &parts); err != nil {
+		return "", "", fmt.Errorf("parse participants: %w", err)
+	}
+	for _, p := range parts {
+		if number := strings.TrimSpace(p["number"]); number != "" {
+			service := "iMessage"
+			if !strings.Contains(number, "@") && !strings.HasPrefix(number, "+") {
+				// Plain digits are typically SMS-only — let Messages decide.
+				service = "iMessage"
+			}
+			return number, service, nil
+		}
+	}
+	return "", "", errors.New("no participant handle found")
+}
+
+// runAppleScriptSend invokes osascript to tell Messages.app to send a
+// message. The script intentionally does NOT activate Messages, so we don't
+// steal focus. Errors from osascript surface verbatim.
+func runAppleScriptSend(buddy, service, message string) error {
+	// service must be a literal AppleScript identifier (iMessage / SMS), not
+	// a string. buddy + message ARE strings, so use %q which produces an
+	// AppleScript-compatible quoted/escaped form.
+	script := fmt.Sprintf(`tell application "Messages"
+	set targetService to first service whose service type = %s
+	set targetBuddy to buddy %q of targetService
+	send %q to targetBuddy
+end tell`, service, buddy, message)
+	cmd := exec.Command("osascript", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("osascript: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
