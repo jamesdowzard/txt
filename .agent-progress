@@ -1,10 +1,10 @@
-# Agent Progress - fix-platform-icons
+# Agent Progress - vip-contacts
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T09:38:13Z
+# Created: 2026-04-19T10:35:43Z
 
-feature=fix-platform-icons
-name=Make platform icons visible on avatar pill
+feature=vip-contacts
+name=VIP contacts
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T09:38:13Z
+created=2026-04-19T10:35:43Z

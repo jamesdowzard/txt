@@ -134,6 +134,8 @@
   const $convoList = document.getElementById('conversation-list');
   const $folderTabs = document.getElementById('sidebar-folder-tabs');
   const $sourceFilters = document.getElementById('sidebar-source-filters');
+  const $vipSection = document.getElementById('vip-section');
+  const $vipList = document.getElementById('vip-list');
   const $emptyState = document.getElementById('empty-state');
   const $chatHeader = document.getElementById('chat-header');
   const $chatHeaderAvatar = document.getElementById('chat-header-avatar');
@@ -2216,6 +2218,7 @@
     const isPinned = (convo.PinnedAt || convo.pinned_at || 0) > 0;
     const archivedAt = convo.ArchivedAt || convo.archived_at || 0;
     const isArchived = archivedAt > 0 || (convo.Folder || convo.folder || '') === FOLDER_ARCHIVE;
+    const isVIP = !!(convo.IsVIP || convo.is_vip);
     items.push(
       { type: 'divider' },
       {
@@ -2225,6 +2228,10 @@
       {
         label: isArchived ? 'Unarchive conversation' : 'Archive conversation',
         action: isArchived ? 'unarchive-conversation' : 'archive-conversation',
+      },
+      {
+        label: isVIP ? 'Remove VIP star' : 'Star as VIP',
+        action: isVIP ? 'unvip-conversation' : 'vip-conversation',
       },
       { type: 'divider' },
       {
@@ -2461,6 +2468,23 @@
     console.warn('Reconnecting event stream:', reason);
   }
 
+  // ─── Render VIP Section ───
+  function renderVIPSection(convos) {
+    if (!$vipSection || !$vipList) return;
+    const vips = (convos || []).filter(c => c.IsVIP === true || c.is_vip === true);
+    if (!vips.length) {
+      $vipSection.hidden = true;
+      $vipList.innerHTML = '';
+      return;
+    }
+    $vipSection.hidden = false;
+    $vipList.innerHTML = '';
+    vips.forEach(convo => {
+      $vipList.appendChild(createConversationRow(convo));
+    });
+    hydrateNativeAvatars($vipList);
+  }
+
   // ─── Render Conversations ───
   function renderConversations(convos, isSearch) {
     if (!isSearch) {
@@ -2468,6 +2492,7 @@
     }
     renderEmptyState();
     renderPlatformFilters(convos);
+    renderVIPSection(allConversations);
     const visibleConvos = filterConversationsByPlatform(convos);
     conversations = visibleConvos;
     $convoList.innerHTML = '';
@@ -4804,6 +4829,28 @@
     });
   }
 
+  async function setConversationVIP(conv, vip) {
+    if (!conv || !conv.ConversationID) return;
+    const action = vip ? 'vip' : 'unvip';
+    try {
+      const resp = await fetch(`/api/conversations/${encodeURIComponent(conv.ConversationID)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        showThreadFeedback(`${action} failed: ${body || resp.status}`);
+        return;
+      }
+      applyConversationPatch(conv.ConversationID, { IsVIP: vip, is_vip: vip });
+      renderVIPSection(allConversations);
+      showThreadFeedback(vip ? 'Starred as VIP.' : 'VIP star removed.');
+    } catch (err) {
+      showThreadFeedback(`${action} failed: ${err.message || err}`);
+    }
+  }
+
   async function archiveConversation(conv, archive) {
     if (!conv || !conv.ConversationID) return;
     const action = archive ? 'archive' : 'unarchive';
@@ -5050,6 +5097,10 @@
           }
           if (action === 'archive-conversation' || action === 'unarchive-conversation') {
             await archiveConversation(context.conversation, action === 'archive-conversation');
+            return;
+          }
+          if (action === 'vip-conversation' || action === 'unvip-conversation') {
+            await setConversationVIP(context.conversation, action === 'vip-conversation');
             return;
           }
         }

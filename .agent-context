@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Make platform icons visible on avatar pill
-Dark colour for inline SVG against near-white avatar-platform-stack pill.
+VIP contacts
+Add is_vip column + API endpoints + sidebar VIP section for starred conversations (issue #15 item #5a)
 
 ## Current State
 Not started. No work has been done yet.
