@@ -1091,6 +1091,7 @@
   function conversationSupportsMediaOutbound(convo) {
     return !!convo && (
       sourcePlatformOf(convo) === 'sms'
+      || sourcePlatformOf(convo) === 'imessage'
       || (sourcePlatformOf(convo) === 'whatsapp' && whatsAppStatus.connected)
       || (sourcePlatformOf(convo) === 'signal' && signalStatus.connected)
     );
