@@ -24,6 +24,10 @@ tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = { version = "2", optional = true }
+# Menu-bar popover positioning — anchors the popover window under the
+# NSStatusItem via `Position::TrayCenter`. Needs the `tray-icon` feature
+# so `on_tray_event` can track the tray rect.
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"

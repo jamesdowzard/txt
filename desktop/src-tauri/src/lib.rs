@@ -1,10 +1,13 @@
 mod notifications;
 mod sse;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_positioner::{Position, WindowExt};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -30,6 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_positioner::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -131,6 +135,14 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 sse::run(BACKEND_ORIGIN.to_string()).await;
             });
+
+            // Menu-bar popover (#20 item 1 / #15 #5b). NSStatusItem tray
+            // with unread-count title; click opens a 320×480 popover window
+            // listing VIPs + a quick-reply composer. Non-fatal if it fails —
+            // the main window still functions without a tray.
+            if let Err(err) = setup_tray(app.handle()) {
+                eprintln!("[tray] setup failed: {err}");
+            }
 
             // Auto-update check at launch. Skip in dev (debug) builds —
             // updater pubkey is a placeholder until the user runs
@@ -402,5 +414,164 @@ async fn check_for_update(app: AppHandle) -> tauri_plugin_updater::Result<()> {
 
     eprintln!("[updater] installed update; relaunching");
     app.restart();
+}
+
+/// Register the `NSStatusItem` tray and wire tray-click → popover window.
+/// Also spawns a background poller that refreshes the tray title with the
+/// total unread count every 30 s. Non-fatal — errors log and propagate so
+/// the caller can decide whether to continue without a tray.
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    let last_hidden: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let lh_tray = last_hidden.clone();
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("default window icon configured in tauri.conf.json"),
+        )
+        .icon_as_template(true)
+        .on_tray_icon_event(move |tray, event| {
+            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                // Guard against the tray-click that just caused the popover
+                // to blur re-opening it again. Window-focus-loss records an
+                // Instant; any tray click within 250 ms is treated as the
+                // dismiss-click and dropped.
+                let recently_hidden = lh_tray
+                    .lock()
+                    .ok()
+                    .and_then(|g| *g)
+                    .map(|t| t.elapsed().as_millis() < 250)
+                    .unwrap_or(false);
+                if recently_hidden {
+                    return;
+                }
+                toggle_popover(tray.app_handle(), &lh_tray);
+            }
+        })
+        .build(app)?;
+
+    spawn_unread_poller(app.clone());
+    Ok(())
+}
+
+/// Show-or-hide the popover window, creating it lazily on first use.
+/// Eager creation in `setup()` races the Go sidecar's bind on port 7007
+/// and the WebView navigates to a refused connection.
+fn toggle_popover(app: &AppHandle, last_hidden: &Arc<Mutex<Option<Instant>>>) {
+    if let Some(popover) = app.get_webview_window("popover") {
+        if popover.is_visible().unwrap_or(false) {
+            let _ = popover.hide();
+        } else {
+            let _ = popover.move_window(Position::TrayCenter);
+            let _ = popover.show();
+            let _ = popover.set_focus();
+        }
+        return;
+    }
+
+    let url = format!("{}/popover.html", BACKEND_ORIGIN);
+    let parsed = match url.parse() {
+        Ok(u) => u,
+        Err(err) => {
+            eprintln!("[popover] invalid URL {url}: {err}");
+            return;
+        }
+    };
+    let popover = match tauri::WebviewWindowBuilder::new(
+        app,
+        "popover",
+        tauri::WebviewUrl::External(parsed),
+    )
+    .title("txt")
+    .inner_size(320.0, 480.0)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(true)
+    .visible(false)
+    .build()
+    {
+        Ok(w) => w,
+        Err(err) => {
+            eprintln!("[popover] failed to create window: {err}");
+            return;
+        }
+    };
+
+    // Click-outside-dismiss: hide whenever the popover loses focus, and
+    // stamp the hide time so the tray-click debounce can distinguish the
+    // dismiss-click from a fresh re-open click.
+    let lh = last_hidden.clone();
+    let pop = popover.clone();
+    popover.on_window_event(move |event| {
+        if let tauri::WindowEvent::Focused(false) = event {
+            if let Ok(mut slot) = lh.lock() {
+                *slot = Some(Instant::now());
+            }
+            let _ = pop.hide();
+        }
+    });
+
+    let _ = popover.move_window(Position::TrayCenter);
+    let _ = popover.show();
+    let _ = popover.set_focus();
+}
+
+/// Poll `/api/conversations` every 30 s and update the tray title with the
+/// total unread count. Empty title when zero so the menu-bar icon stays
+/// clean. Poll failures are silent — the tray is a nice-to-have, not a
+/// critical path.
+fn spawn_unread_poller(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("[tray-poller] build http client: {err}");
+                return;
+            }
+        };
+        // Let the Go sidecar bind :7007 before the first poll.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        loop {
+            if let Ok(resp) = client
+                .get(format!("{BACKEND_ORIGIN}/api/conversations?limit=500"))
+                .send()
+                .await
+            {
+                if let Ok(convos) = resp.json::<serde_json::Value>().await {
+                    let total: i64 = convos
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|c| {
+                                    c.get("UnreadCount").and_then(|v| v.as_i64())
+                                })
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    if let Some(tray) = app.tray_by_id("main-tray") {
+                        let title = if total > 0 {
+                            Some(total.to_string())
+                        } else {
+                            None
+                        };
+                        let _ = tray.set_title(title);
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
 }
 
