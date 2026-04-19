@@ -1,10 +1,10 @@
-# Agent Progress - pigeon-chrome
+# Agent Progress - ui-tweaks
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T08:55:27Z
+# Created: 2026-04-19T09:11:42Z
 
-feature=pigeon-chrome
-name=Pigeon-style chrome: no traffic lights + tabs
+feature=ui-tweaks
+name=Cmd+T new msg + sidebar platform icons
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T08:55:27Z
+created=2026-04-19T09:11:42Z

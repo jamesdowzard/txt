@@ -3398,6 +3398,17 @@ body::after {
   height: 12px;
 }
 
+.platform-chip-logo svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+.avatar-platform-stack .platform-chip-logo svg {
+  width: 10px;
+  height: 10px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
