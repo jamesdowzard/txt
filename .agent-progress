@@ -1,10 +1,10 @@
-# Agent Progress - ui-tweaks
+# Agent Progress - fix-platform-icons
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T09:11:42Z
+# Created: 2026-04-19T09:38:13Z
 
-feature=ui-tweaks
-name=Cmd+T new msg + sidebar platform icons
+feature=fix-platform-icons
+name=Make platform icons visible on avatar pill
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T09:11:42Z
+created=2026-04-19T09:38:13Z

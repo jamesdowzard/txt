@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Cmd+T new msg + sidebar platform icons
-Bind Cmd+T to openNewMsg(). Add small platform badge icon to conversation rows in the sidebar.
+Make platform icons visible on avatar pill
+Dark colour for inline SVG against near-white avatar-platform-stack pill.
 
 ## Current State
 Not started. No work has been done yet.

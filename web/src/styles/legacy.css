@@ -3407,7 +3407,13 @@ body::after {
 .avatar-platform-stack .platform-chip-logo svg {
   width: 10px;
   height: 10px;
+  fill: currentColor;
 }
+
+.avatar-platform-stack .platform-chip--sms .platform-chip-logo svg { color: #34c759; }
+.avatar-platform-stack .platform-chip--imessage .platform-chip-logo svg { color: #0b84ff; }
+.avatar-platform-stack .platform-chip--gchat .platform-chip-logo svg { color: #1a73e8; }
+.avatar-platform-stack .platform-chip--telegram .platform-chip-logo svg { color: #26a5e4; }
 
 .sr-only {
   position: absolute;
