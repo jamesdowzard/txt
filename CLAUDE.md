@@ -1,6 +1,6 @@
-# Textbridge
+# txt
 
-Native Tauri macOS app wrapping a Go backend (libgm) for reading and sending Google Messages from the Mac. Forked from [MaxGhenis/openmessage](https://github.com/MaxGhenis/openmessage) and retargeted for Google Messages only.
+Native Tauri macOS app (bundle name `txt.app`, bundle ID `ai.james-is-an.textbridge`) wrapping a Go backend that reads + sends across Google Messages, iMessage, and the legacy Signal/WhatsApp importers. Forked from [MaxGhenis/openmessage](https://github.com/MaxGhenis/openmessage) and retargeted as a personal multi-platform reader. The Go binary is still named `textbridge-backend` for historical/codesign continuity — only the visible app name changed to `txt`.
 
 ## Architecture
 
@@ -11,7 +11,9 @@ textbridge/
 ├── internal/
 │   ├── app/               # Bootstrap, data dir, backfill
 │   ├── client/            # libgm Google Messages protocol
+│   ├── contacts/          # macOS Contacts loader (phone+email → name)
 │   ├── db/                # SQLite store (conversations, messages, contacts, drafts)
+│   ├── importer/          # Per-platform importers (gchat, imessage, signal_desktop, whatsapp_native)
 │   ├── tools/             # MCP tools
 │   └── web/static/dist/   # Embedded web UI (Vite build output — source lives in web/)
 ├── web/                   # Vite + Preact + HTM source for the UI
@@ -27,6 +29,19 @@ textbridge/
 └── site/                  # (legacy) upstream's marketing site — not used here
 ```
 
+## iMessage support
+
+`internal/importer/imessage.go` reads `~/Library/Messages/chat.db` every 30s (requires Full Disk Access on `/Applications/txt.app`). Features:
+
+- **Body extraction** from `m.text` AND `m.attributedBody` (NSKeyedArchiver typedstream blob — modern Messages.app leaves `text` NULL).
+- **Attachments** stored as `MediaID` = path relative to `~/Library/Messages/Attachments`. `/api/media/<msgid>` serves the file with the correct MIME type, sandboxed to that root.
+- **Reactions** (Tapbacks) folded from `associated_message_type` 2000-3005 rows into the existing JSON shape the UI renders.
+- **Read receipts** map `is_read=1` → `status='read'` on outgoing messages.
+- **Contact resolution** via `internal/contacts`, which walks every `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb` and indexes both phone numbers (last-9-digit normalization) and email addresses (lowercased). Names propagate to conversation `name`, message `sender_name`, and reaction actors.
+- **Sending** via `osascript`: `/api/send` for any `imessage:` conversation calls `tell application "Messages" ... send ... to buddy <handle>` without `activate`. 1:1 only — group chats blocked at the buddy-picker.
+
+`loadChats` MUST drain `*sql.Rows` before issuing nested participant/message queries — chat.db is opened with `SetMaxOpenConns(1)` and a nested query inside `rows.Next()` deadlocks. See PR #52.
+
 ## Build + deploy
 
 ```bash
@@ -39,7 +54,7 @@ go build -o textbridge .
 # Tauri app — build-sidecar runs the web build automatically
 cd desktop
 ./scripts/build-sidecar      # required before cargo tauri build
-./scripts/release patch      # build, sign, install to /Applications/Textbridge.app
+./scripts/release patch      # build, sign, install to /Applications/txt.app
 ./scripts/dev --launch       # orange dev variant alongside stable
 ```
 
@@ -56,9 +71,9 @@ Signing: `Developer ID Application: James Dowzard (G54DLMPV94)`. Bundle ID: `ai.
 
 The Tauri shell passes `OPENMESSAGES_DATA_DIR` → Go sidecar, pointing at the first path.
 
-## Google-only mode
+## Google-only mode (sender-side only)
 
-The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync still runs. CLI `./textbridge serve` without the flag retains upstream multi-platform behaviour.
+The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync (read + send) still runs unconditionally. CLI `./textbridge serve` without the flag retains upstream multi-platform behaviour.
 
 **One-off cleanup** after first upgrade: any WhatsApp/Signal conversations previously imported still live in `~/Library/Application Support/ai.james-is-an.textbridge/messages.db`. Move the file to Trash and re-pair Google Messages for a clean list. Bridge-era session leftovers (`signal-cli/`, `whatsapp-session.db`) and the 75 MB legacy `~/.local/share/openmessage/` dir can be cleared with `desktop/scripts/cleanup-bridges` (dry-run by default; pass `--apply` to commit).
 
