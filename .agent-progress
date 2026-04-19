@@ -1,10 +1,10 @@
-# Agent Progress - scheduled-send
+# Agent Progress - fix-menu-color
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T07:54:42Z
+# Created: 2026-04-19T08:51:28Z
 
-feature=scheduled-send
-name=Scheduled send + outbox
+feature=fix-menu-color
+name=Context menu colour match
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T07:54:42Z
+created=2026-04-19T08:51:28Z
