@@ -2687,7 +2687,8 @@
       renderConversations(allConversations);
     }
 
-    // Show chat UI
+    // Show chat UI (and dismiss outbox view if open)
+    hideOutboxView();
     $emptyState.style.display = 'none';
     $chatHeader.style.display = 'flex';
     $messagesArea.style.display = 'flex';
@@ -3588,11 +3589,10 @@
       || (hasText && !conversationSupportsOutbound(activeConversation))
       || (hasMedia && !conversationSupportsMediaOutbound(activeConversation));
     // Schedule supports SMS/RCS only and requires text (no media scheduling yet).
-    const schedBtn = document.getElementById('schedule-btn');
-    if (schedBtn) {
-      schedBtn.disabled = !activeConversation
+    if ($scheduleBtn) {
+      $scheduleBtn.disabled = !activeConversation
         || !hasText
-        || sourcePlatformOf(activeConversation) !== 'sms';
+        || !conversationSupportsOutbound(activeConversation);
     }
   }
 
@@ -3607,114 +3607,264 @@
 
   // ─── Scheduled send ───
   const $scheduleBtn = document.getElementById('schedule-btn');
-  let $scheduleMenu = null;
-  function buildSchedulePresets() {
-    const now = Date.now();
-    const presets = [
-      { label: 'In 5 minutes', delta: 5 * 60 * 1000 },
-      { label: 'In 1 hour', delta: 60 * 60 * 1000 },
-      { label: 'In 4 hours', delta: 4 * 60 * 60 * 1000 },
-    ];
-    // Tomorrow 9am (local time)
-    const tomorrow9 = new Date(now);
-    tomorrow9.setDate(tomorrow9.getDate() + 1);
-    tomorrow9.setHours(9, 0, 0, 0);
-    presets.push({ label: 'Tomorrow at 9 AM', sendAt: Math.floor(tomorrow9.getTime() / 1000) });
-    return presets.map(p => ({
-      label: p.label,
-      sendAt: p.sendAt || Math.floor((now + p.delta) / 1000),
-    }));
+  let $schedulePopover = null;
+
+  /** Format a Date as the value for <input type="datetime-local"> (YYYY-MM-DDTHH:MM). */
+  function toDatetimeLocalValue(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
-  function ensureScheduleMenu() {
-    if ($scheduleMenu) return $scheduleMenu;
-    $scheduleMenu = document.createElement('div');
-    $scheduleMenu.className = 'schedule-menu';
-    $scheduleMenu.id = 'schedule-menu';
-    document.body.appendChild($scheduleMenu);
-    document.addEventListener('click', (e) => {
-      if (!$scheduleMenu.classList.contains('show')) return;
-      if (e.target.closest('.schedule-menu') || e.target.closest('#schedule-btn')) return;
-      $scheduleMenu.classList.remove('show');
-    });
-    return $scheduleMenu;
+
+  function closeSchedulePopover() {
+    if ($schedulePopover) {
+      $schedulePopover.classList.remove('show');
+    }
   }
-  async function scheduleCurrentMessage(sendAtUnix) {
+
+  function openSchedulePopover() {
+    if (!$schedulePopover) {
+      $schedulePopover = document.createElement('div');
+      $schedulePopover.className = 'schedule-popover';
+      $schedulePopover.id = 'schedule-popover';
+      $schedulePopover.innerHTML = `
+        <div class="schedule-popover-label">Send at</div>
+        <input type="datetime-local" id="schedule-datetime" class="schedule-datetime-input">
+        <div id="schedule-popover-error" class="schedule-popover-error"></div>
+        <div class="schedule-popover-actions">
+          <button id="schedule-popover-cancel" class="schedule-popover-btn-cancel">Cancel</button>
+          <button id="schedule-popover-submit" class="schedule-popover-btn-submit">Schedule</button>
+        </div>
+      `;
+      document.body.appendChild($schedulePopover);
+
+      document.addEventListener('click', (e) => {
+        if (!$schedulePopover.classList.contains('show')) return;
+        if (e.target.closest('#schedule-popover') || e.target.closest('#schedule-btn')) return;
+        closeSchedulePopover();
+      });
+
+      $schedulePopover.querySelector('#schedule-popover-cancel').addEventListener('click', closeSchedulePopover);
+      $schedulePopover.querySelector('#schedule-popover-submit').addEventListener('click', () => {
+        const $dt = $schedulePopover.querySelector('#schedule-datetime');
+        const $err = $schedulePopover.querySelector('#schedule-popover-error');
+        $err.textContent = '';
+        const ms = new Date($dt.value).getTime();
+        if (!$dt.value || isNaN(ms)) {
+          $err.textContent = 'Please pick a date and time.';
+          return;
+        }
+        const minMs = Date.now() + 60_000;
+        if (ms < minMs) {
+          $err.textContent = 'Must be at least 1 minute in the future.';
+          return;
+        }
+        scheduleCurrentMessage(ms);
+      });
+    }
+
+    // Default: now + 5 min, rounded to nearest minute
+    const defaultDt = new Date(Date.now() + 5 * 60 * 1000);
+    defaultDt.setSeconds(0, 0);
+    $schedulePopover.querySelector('#schedule-datetime').value = toDatetimeLocalValue(defaultDt);
+    $schedulePopover.querySelector('#schedule-popover-error').textContent = '';
+
+    // Position near the schedule button
+    const btnRect = $scheduleBtn.getBoundingClientRect();
+    $schedulePopover.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
+    $schedulePopover.style.right = `${window.innerWidth - btnRect.right}px`;
+    $schedulePopover.classList.add('show');
+    $schedulePopover.querySelector('#schedule-datetime').focus();
+  }
+
+  async function scheduleCurrentMessage(scheduledAtMs) {
     if (!activeConvoId || !activeConversation) return;
     const text = $composeInput.value.trim();
     if (!text) return;
-    if (sourcePlatformOf(activeConversation) !== 'sms') {
-      showThreadFeedback('Scheduled send is only supported for SMS/RCS conversations.');
-      return;
-    }
+    const $err = $schedulePopover ? $schedulePopover.querySelector('#schedule-popover-error') : null;
     try {
-      await postJSON('/api/outbox', {
+      await postJSON('/api/schedule', {
         conversation_id: activeConvoId,
         body: text,
-        send_at: sendAtUnix,
+        scheduled_at: scheduledAtMs,
+        reply_to_id: replyToMsg ? (replyToMsg.MessageID || '') : '',
       });
       $composeInput.value = '';
       autoResize();
-      $sendBtn.disabled = true;
-      $scheduleBtn.disabled = true;
-      const when = new Date(sendAtUnix * 1000);
-      showThreadFeedback(`Scheduled for ${when.toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })}.`);
-      refreshOutboxBanner();
+      closeSchedulePopover();
+      showThreadFeedback('Scheduled.');
+      refreshOutboxCount();
     } catch (err) {
-      showThreadFeedback(`Schedule failed: ${err.message || err}`);
+      const msg = err.message || 'Schedule failed.';
+      if ($err) {
+        $err.textContent = msg;
+      } else {
+        showThreadFeedback(msg);
+      }
     }
   }
+
   if ($scheduleBtn) {
     $scheduleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const menu = ensureScheduleMenu();
-      const presets = buildSchedulePresets();
-      menu.innerHTML = presets.map((p, i) => `<button data-idx="${i}">${p.label}</button>`).join('');
-      menu.querySelectorAll('button').forEach((btn, i) => {
-        btn.addEventListener('click', () => {
-          menu.classList.remove('show');
-          scheduleCurrentMessage(presets[i].sendAt);
-        });
-      });
-      menu.classList.toggle('show');
+      if ($schedulePopover && $schedulePopover.classList.contains('show')) {
+        closeSchedulePopover();
+      } else {
+        openSchedulePopover();
+      }
     });
   }
 
-  async function refreshOutboxBanner() {
-    let $banner = document.getElementById('outbox-banner');
-    if (!$banner) {
-      $banner = document.createElement('div');
-      $banner.id = 'outbox-banner';
-      $banner.className = 'outbox-banner';
-      const chatPane = document.getElementById('chat-pane');
-      if (chatPane && chatPane.firstChild) {
-        chatPane.insertBefore($banner, chatPane.firstChild);
-      }
-    }
+  // ─── Outbox count badge + sidebar nav ───
+  const $outboxNavRow = document.getElementById('outbox-nav-row');
+  const $outboxNavCount = document.getElementById('outbox-nav-count');
+  let outboxViewActive = false;
+
+  async function refreshOutboxCount() {
     try {
-      const items = await fetchJSON('/api/outbox?status=pending');
-      const mineHere = items.filter(it => it.conversation_id === activeConvoId);
-      if (mineHere.length === 0) {
-        $banner.classList.remove('show');
-        return;
+      const items = await fetchJSON('/api/outbox');
+      const pending = items.filter(it => it.status === 'pending');
+      if ($outboxNavCount) {
+        if (pending.length > 0) {
+          $outboxNavCount.textContent = String(pending.length);
+          $outboxNavCount.hidden = false;
+        } else {
+          $outboxNavCount.hidden = true;
+        }
       }
-      const next = mineHere[0];
-      const when = new Date(next.send_at * 1000);
-      $banner.innerHTML = `${mineHere.length} scheduled — next at ${when.toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })} <button data-id="${next.id}">Cancel</button>`;
-      $banner.classList.add('show');
-      $banner.querySelector('button')?.addEventListener('click', async () => {
+      if (outboxViewActive) {
+        renderOutboxView(items);
+      }
+    } catch (_err) {
+      // silent — count is best-effort
+    }
+  }
+
+  /** Format a unix-ms timestamp as a relative human string. */
+  function formatScheduledRelative(ms) {
+    const diffMs = ms - Date.now();
+    const diffMin = Math.round(diffMs / 60_000);
+    if (diffMin < 0) return new Date(ms).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
+    if (diffMin < 60) return `in ${diffMin} minute${diffMin !== 1 ? 's' : ''}`;
+    const diffH = Math.round(diffMin / 60);
+    if (diffH < 24) return `in ${diffH} hour${diffH !== 1 ? 's' : ''}`;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const scheduledDate = new Date(ms);
+    if (
+      scheduledDate.getDate() === tomorrow.getDate() &&
+      scheduledDate.getMonth() === tomorrow.getMonth() &&
+      scheduledDate.getFullYear() === tomorrow.getFullYear()
+    ) {
+      return `Tomorrow at ${scheduledDate.toLocaleString([], { hour: 'numeric', minute: '2-digit' })}`;
+    }
+    return scheduledDate.toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
+  }
+
+  function renderOutboxView(items) {
+    const $chatPane = document.getElementById('chat-pane');
+    if (!$chatPane) return;
+    let $view = document.getElementById('outbox-view');
+    if (!$view) {
+      $view = document.createElement('div');
+      $view.id = 'outbox-view';
+      $view.className = 'outbox-view';
+      $chatPane.appendChild($view);
+    }
+
+    $chatHeader.style.display = 'none';
+    $messagesArea.style.display = 'none';
+    $composeBar.style.display = 'none';
+    $view.style.display = 'flex';
+
+    if (!items || items.length === 0) {
+      $view.innerHTML = '<div class="outbox-view-empty">No scheduled messages.</div>';
+      return;
+    }
+
+    $view.innerHTML = `
+      <div class="outbox-view-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Outbox
+      </div>
+      <div class="outbox-view-list">
+        ${items.map(item => {
+          const convo = conversationByID(item.conversation_id);
+          const name = convo ? (convo.Name || item.conversation_id) : item.conversation_id;
+          const bodyTrunc = item.body.length > 80 ? item.body.slice(0, 80) + '…' : item.body;
+          const relTime = formatScheduledRelative(item.scheduled_at);
+          const isPending = item.status === 'pending';
+          return `<div class="outbox-view-row" data-id="${item.id}" data-status="${item.status}">
+            <div class="outbox-row-main">
+              <span class="outbox-row-name">${escapeHtml(name)}</span>
+              <span class="outbox-row-body">${escapeHtml(bodyTrunc)}</span>
+            </div>
+            <div class="outbox-row-meta">
+              <span class="outbox-row-time">${escapeHtml(relTime)}</span>
+              <span class="outbox-row-status ${isPending ? 'outbox-status-pending' : 'outbox-status-failed'}">${isPending ? 'pending' : 'failed'}</span>
+              ${isPending ? `<button class="outbox-row-cancel" data-id="${item.id}" title="Cancel">&times;</button>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+
+    $view.querySelectorAll('.outbox-row-cancel').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.id);
+        const row = btn.closest('.outbox-view-row');
+        if (row) row.style.opacity = '0.4';
         try {
-          await fetch(`/api/outbox/${next.id}`, { method: 'DELETE' });
-          refreshOutboxBanner();
+          await fetch(API + `/api/schedule/${id}`, { method: 'DELETE' });
+          await refreshOutboxCount();
         } catch (err) {
+          if (row) row.style.opacity = '';
           showThreadFeedback('Cancel failed: ' + (err.message || err));
         }
       });
-    } catch (err) {
-      // silent — banner is best-effort
-    }
+    });
   }
-  // Refresh banner whenever the active conversation changes.
-  setInterval(refreshOutboxBanner, 30000);
+
+  function showOutboxView() {
+    outboxViewActive = true;
+    activeConvoId = null;
+    activeConversation = null;
+    closeSchedulePopover();
+    refreshOutboxCount();
+    if ($outboxNavRow) $outboxNavRow.classList.add('active');
+  }
+
+  function hideOutboxView() {
+    outboxViewActive = false;
+    const $view = document.getElementById('outbox-view');
+    if ($view) $view.style.display = 'none';
+    if ($outboxNavRow) $outboxNavRow.classList.remove('active');
+  }
+
+  if ($outboxNavRow) {
+    $outboxNavRow.addEventListener('click', () => {
+      if (outboxViewActive) {
+        hideOutboxView();
+        renderEmptyState();
+      } else {
+        showOutboxView();
+      }
+    });
+    $outboxNavRow.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        $outboxNavRow.click();
+      }
+    });
+  }
+
+  // Refresh outbox count on visibility change and every 30s while visible.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshOutboxCount();
+  });
+  setInterval(() => {
+    if (!document.hidden) refreshOutboxCount();
+  }, 30_000);
 
   // ─── Attachments (paste + file picker) ───
   function setAttachment(file) {
@@ -5447,6 +5597,7 @@
     .catch(err => console.error('Failed to initialize native notifications:', err));
   renderEmptyState();
   renderFolderTabs();
+  refreshOutboxCount();
   startEventStream();
   loadConversations().then(() => {
     if (DETACHED_MODE && DETACHED_CONVO) {
