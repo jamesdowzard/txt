@@ -195,6 +195,10 @@ func TestListConversations(t *testing.T) {
 	a.Store.UpsertConversation(&db.Conversation{
 		ConversationID: "c2", Name: "Group Chat", IsGroup: true, LastMessageTS: now + 1,
 	})
+	// ListConversations filters out conversations with zero messages
+	// (production never has empty ones), so seed one each.
+	a.Store.UpsertMessage(&db.Message{MessageID: "m-c1", ConversationID: "c1", Body: "hi", TimestampMS: now})
+	a.Store.UpsertMessage(&db.Message{MessageID: "m-c2", ConversationID: "c2", Body: "hey", TimestampMS: now + 1})
 
 	handler := listConversationsHandler(a)
 	req := mcp.CallToolRequest{}

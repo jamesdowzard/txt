@@ -126,13 +126,16 @@ func TestListConversations(t *testing.T) {
 		t.Fatalf("got %d conversations, want 0", len(convos))
 	}
 
-	// Add some conversations
+	// Add some conversations. ListConversations filters out conversations
+	// with zero messages (production never has empty ones).
 	ts.store.UpsertConversation(&db.Conversation{
 		ConversationID: "c1", Name: "Alice", LastMessageTS: 200,
 	})
 	ts.store.UpsertConversation(&db.Conversation{
 		ConversationID: "c2", Name: "Bob", LastMessageTS: 100,
 	})
+	ts.store.UpsertMessage(&db.Message{MessageID: "m-c1", ConversationID: "c1", Body: "hi", TimestampMS: 200})
+	ts.store.UpsertMessage(&db.Message{MessageID: "m-c2", ConversationID: "c2", Body: "yo", TimestampMS: 100})
 
 	resp2, err := http.Get(ts.server.URL + "/api/conversations")
 	if err != nil {
@@ -214,6 +217,8 @@ func TestListConversationsByFolder_Route(t *testing.T) {
 	ts := newTestServer(t)
 	_ = ts.store.UpsertConversation(&db.Conversation{ConversationID: "a", Name: "A", LastMessageTS: 3000})
 	_ = ts.store.UpsertConversation(&db.Conversation{ConversationID: "b", Name: "B", LastMessageTS: 2000, Folder: db.FolderArchive})
+	_ = ts.store.UpsertMessage(&db.Message{MessageID: "m-a", ConversationID: "a", Body: "x", TimestampMS: 3000})
+	_ = ts.store.UpsertMessage(&db.Message{MessageID: "m-b", ConversationID: "b", Body: "y", TimestampMS: 2000})
 
 	resp, err := http.Get(ts.server.URL + "/api/conversations?folder=archive")
 	if err != nil {
