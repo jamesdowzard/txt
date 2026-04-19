@@ -2186,12 +2186,35 @@ func pickIMessageTarget(conv *db.Conversation) (imessageTarget, error) {
 	if err := json.Unmarshal([]byte(conv.Participants), &parts); err != nil {
 		return imessageTarget{}, fmt.Errorf("parse participants: %w", err)
 	}
+	service := serviceFromConversationID(conv.ConversationID)
 	for _, p := range parts {
 		if number := strings.TrimSpace(p["number"]); number != "" {
-			return imessageTarget{buddy: number, service: "iMessage"}, nil
+			return imessageTarget{buddy: number, service: service}, nil
 		}
 	}
 	return imessageTarget{}, errors.New("no participant handle found")
+}
+
+// serviceFromConversationID pulls the AppleScript service identifier out of
+// a 1:1 chat.db GUID. chat.guid is encoded as "<Service>;<groupMarker>;<handle>"
+// (e.g. "iMessage;-;+61437590462" or "SMS;-;+61437590462"). Honouring this
+// prevents forcing iMessage onto a chat Messages.app has already decided is
+// SMS — which triggers "Not Delivered" when the recipient isn't reachable
+// over iMessage.
+func serviceFromConversationID(conversationID string) string {
+	guid := strings.TrimPrefix(conversationID, "imessage:")
+	head, _, ok := strings.Cut(guid, ";")
+	if !ok {
+		return "iMessage"
+	}
+	switch strings.ToLower(head) {
+	case "sms":
+		return "SMS"
+	case "imessage":
+		return "iMessage"
+	default:
+		return "iMessage"
+	}
 }
 
 // pickIMessageBuddy is a thin wrapper kept for backwards-compat with the

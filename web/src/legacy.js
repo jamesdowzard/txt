@@ -1069,6 +1069,7 @@
     if (!convo) return false;
     const platform = sourcePlatformOf(convo);
     return platform === 'sms'
+      || platform === 'imessage'
       || (platform === 'whatsapp' && whatsAppStatus.connected)
       || (platform === 'signal' && signalStatus.connected);
   }

@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-tb-compose-body-prefill
-tb-compose-body-prefill
+Unlock iMessage composer
+conversationSupportsOutbound excluded imessage so the composer was read-only even though /api/send already routes to Messages.app via osascript. Flip the flag.
 
 ## Current State
 Not started. No work has been done yet.

@@ -1,10 +1,10 @@
-# Agent Progress - tb-compose-body-prefill
+# Agent Progress - imessage-outbound-composer
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-17T03:42:23Z
+# Created: 2026-04-19T06:53:53Z
 
-feature=tb-compose-body-prefill
-name=tb-compose-body-prefill
+feature=imessage-outbound-composer
+name=Unlock iMessage composer
 status=pending
 step=0
 step_name=Not started
-created=2026-04-17T03:42:23Z
+created=2026-04-19T06:53:53Z

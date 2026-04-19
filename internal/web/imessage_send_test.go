@@ -32,6 +32,24 @@ func TestPickIMessageBuddy(t *testing.T) {
 			wantService: "iMessage",
 		},
 		{
+			name: "SMS chat routes via SMS service",
+			conv: &db.Conversation{
+				ConversationID: "imessage:SMS;-;+61437590462",
+				Participants:   `[{"number":"+61437590462"}]`,
+			},
+			wantBuddy:   "+61437590462",
+			wantService: "SMS",
+		},
+		{
+			name: "iMessage prefix keeps iMessage service",
+			conv: &db.Conversation{
+				ConversationID: "imessage:iMessage;-;+61437590462",
+				Participants:   `[{"number":"+61437590462"}]`,
+			},
+			wantBuddy:   "+61437590462",
+			wantService: "iMessage",
+		},
+		{
 			name: "group blocked via pickIMessageBuddy (use pickIMessageTarget)",
 			conv: &db.Conversation{
 				IsGroup:        true,
