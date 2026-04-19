@@ -673,6 +673,19 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			writeJSON(w, convo)
 			return
 		}
+		if action == "vip" || action == "unvip" {
+			if r.Method != http.MethodPost {
+				httpError(w, "method not allowed", 405)
+				return
+			}
+			if err := store.SetVIP(convID, action == "vip"); err != nil {
+				httpError(w, "set vip: "+err.Error(), 500)
+				return
+			}
+			publishConversations()
+			writeJSON(w, map[string]string{"status": "ok"})
+			return
+		}
 		if action != "messages" {
 			httpError(w, "not found", 404)
 			return

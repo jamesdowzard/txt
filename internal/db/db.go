@@ -28,6 +28,7 @@ type Conversation struct {
 	ArchivedAt       int64  `json:"archived_at,omitempty"` // unix seconds; 0 = not archived. Kept alongside Folder for local-only archive state (Folder stays authoritative for Google Messages libgm sync).
 	Nickname         string `json:"nickname,omitempty"` // user-set local display name; falls back to Name when empty.
 	SnoozedUntil     int64  `json:"snoozed_until,omitempty"` // unix seconds; 0 = not snoozed. When >0 and now() < SnoozedUntil, hide from inbox list until it expires.
+	IsVIP            bool   `json:"is_vip,omitempty"` // starred — shown in VIPs section above folder filters
 }
 
 type Message struct {
@@ -255,6 +256,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE conversations ADD COLUMN nickname TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE conversations ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE conversations ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE conversations ADD COLUMN is_vip INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // ignore "duplicate column" errors
 	}

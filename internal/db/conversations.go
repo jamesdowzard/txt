@@ -8,7 +8,7 @@ import (
 )
 
 // conversationColumns is the canonical column list for SELECT queries on conversations.
-const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname, snoozed_until, archived_at`
+const conversationColumns = `conversation_id, name, is_group, participants, last_message_ts, unread_count, source_platform, notification_mode, folder, pinned_at, muted_until, nickname, snoozed_until, archived_at, is_vip`
 
 const (
 	NotificationModeAll      = "all"
@@ -109,7 +109,7 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	err := s.db.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt, &c.IsVIP)
 	if err != nil {
 		return nil, err
 	}
@@ -317,6 +317,17 @@ func (s *Store) SetConversationNickname(id, nickname string) error {
 	return err
 }
 
+// SetVIP marks or unmarks a conversation as a VIP (starred). VIP conversations
+// are shown in a dedicated section above the folder filters in the sidebar.
+func (s *Store) SetVIP(conversationID string, vip bool) error {
+	v := 0
+	if vip {
+		v = 1
+	}
+	_, err := s.db.Exec(`UPDATE conversations SET is_vip = ? WHERE conversation_id = ?`, v, conversationID)
+	return err
+}
+
 // SetConversationFolder moves a conversation to `folder` (inbox/archive/spam).
 // Returns an error for unknown folder values.
 func (s *Store) SetConversationFolder(id, folder string) error {
@@ -458,7 +469,7 @@ func scanConversations(rows interface {
 	var convs []*Conversation
 	for rows.Next() {
 		c := &Conversation{}
-		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt, &c.IsVIP); err != nil {
 			return nil, err
 		}
 		c.NotificationMode = normalizeStoredNotificationMode(c.NotificationMode)
@@ -472,7 +483,7 @@ func getConversationTx(tx *sql.Tx, id string) (*Conversation, error) {
 	err := tx.QueryRow(`
 		SELECT `+conversationColumns+`
 		FROM conversations WHERE conversation_id = ?
-	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt)
+	`, id).Scan(&c.ConversationID, &c.Name, &c.IsGroup, &c.Participants, &c.LastMessageTS, &c.UnreadCount, &c.SourcePlatform, &c.NotificationMode, &c.Folder, &c.PinnedAt, &c.MutedUntil, &c.Nickname, &c.SnoozedUntil, &c.ArchivedAt, &c.IsVIP)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

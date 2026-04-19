@@ -2851,6 +2851,17 @@ body::after {
   color: var(--text-muted);
 }
 
+.sidebar-section {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+}
+
+.vip-list {
+  display: flex;
+  flex-direction: column;
+}
+
 .sidebar-source-filters {
   display: flex;
   gap: 8px;

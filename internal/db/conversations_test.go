@@ -684,3 +684,35 @@ func TestListConversationsHidesEmptyConversations(t *testing.T) {
 		t.Fatalf("ListConversations returned %q, want c-real", got[0].ConversationID)
 	}
 }
+
+func TestSetVIP(t *testing.T) {
+	s := newTestStore(t)
+	conv := &Conversation{ConversationID: "test-vip-1", Name: "Alice"}
+	if err := s.UpsertConversation(conv); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	// default false
+	got, err := s.GetConversation("test-vip-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.IsVIP {
+		t.Error("expected IsVIP=false by default")
+	}
+	// set true
+	if err := s.SetVIP("test-vip-1", true); err != nil {
+		t.Fatalf("setvip: %v", err)
+	}
+	got, _ = s.GetConversation("test-vip-1")
+	if !got.IsVIP {
+		t.Error("expected IsVIP=true after SetVIP")
+	}
+	// set false
+	if err := s.SetVIP("test-vip-1", false); err != nil {
+		t.Fatalf("unsetvip: %v", err)
+	}
+	got, _ = s.GetConversation("test-vip-1")
+	if got.IsVIP {
+		t.Error("expected IsVIP=false after unset")
+	}
+}
