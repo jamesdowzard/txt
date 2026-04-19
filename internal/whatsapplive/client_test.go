@@ -22,8 +22,8 @@ import (
 	waevents "go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/whatsappmedia"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/whatsappmedia"
 )
 
 func TestExtractMessageBody(t *testing.T) {

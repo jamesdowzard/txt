@@ -9,8 +9,8 @@ import (
 
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
-	"github.com/maxghenis/openmessage/internal/client"
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/client"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 const (

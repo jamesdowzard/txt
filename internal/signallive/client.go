@@ -23,7 +23,7 @@ import (
 	"github.com/rs/zerolog"
 	"rsc.io/qr"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 const (

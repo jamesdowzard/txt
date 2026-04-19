@@ -9,8 +9,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/maxghenis/openmessage/internal/app"
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/app"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 // Register exposes MCP tools on s. Default = the minimal four

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 func TestComputeStatsEmpty(t *testing.T) {

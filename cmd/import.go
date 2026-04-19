@@ -7,11 +7,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maxghenis/openmessage/internal/app"
-	"github.com/maxghenis/openmessage/internal/importer"
+	"github.com/jamesdowzard/txt/internal/app"
+	"github.com/jamesdowzard/txt/internal/importer"
 )
 
-// RunImport handles the "openmessage import <source> [path]" command.
+// RunImport handles the "txt import <source> [path]" command.
 func RunImport(logger zerolog.Logger, source string, args []string) error {
 	a, err := app.New(logger)
 	if err != nil {
@@ -22,7 +22,7 @@ func RunImport(logger zerolog.Logger, source string, args []string) error {
 	switch source {
 	case "gchat":
 		if len(args) < 1 {
-			return fmt.Errorf("usage: openmessage import gchat <path-to-groups-dir> [--email your@email.com]")
+			return fmt.Errorf("usage: txt import gchat <path-to-groups-dir> [--email your@email.com]")
 		}
 		dirPath := args[0]
 		myEmail := flagValue(args[1:], "--email")
@@ -35,7 +35,7 @@ func RunImport(logger zerolog.Logger, source string, args []string) error {
 
 	case "gchat-conversation":
 		if len(args) < 1 {
-			return fmt.Errorf("usage: openmessage import gchat-conversation <path-to-messages.json> [--email your@email.com]")
+			return fmt.Errorf("usage: txt import gchat-conversation <path-to-messages.json> [--email your@email.com]")
 		}
 		filePath := args[0]
 		myEmail := flagValue(args[1:], "--email")

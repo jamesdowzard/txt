@@ -14,12 +14,12 @@ import (
 	"time"
 )
 
-// buildTestBinary compiles the openmessage binary into a temp directory and
+// buildTestBinary compiles the txt binary into a temp directory and
 // returns the binary path and a clean data directory for OPENMESSAGES_DATA_DIR.
 func buildTestBinary(t *testing.T) (binary, dataDir string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	binary = filepath.Join(tmpDir, "openmessage")
+	binary = filepath.Join(tmpDir, "txt")
 	build := exec.Command("go", "build", "-o", binary, "..")
 	build.Dir = filepath.Join(".")
 	if out, err := build.CombinedOutput(); err != nil {

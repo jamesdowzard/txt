@@ -7,7 +7,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maxghenis/openmessage/cmd"
+	"github.com/jamesdowzard/txt/cmd"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
-	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/jamesdowzard/txt/internal/app"
 )
 
 func RunSendGroup(logger zerolog.Logger, phones []string, message string) error {

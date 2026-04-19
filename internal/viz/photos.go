@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 // Photo holds a photo's data URI and metadata for chronological placement.

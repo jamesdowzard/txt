@@ -10,7 +10,7 @@ import (
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/events"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 // OnDisconnect is called when the client fatally disconnects (e.g. unpaired).

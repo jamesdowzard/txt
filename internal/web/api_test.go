@@ -17,10 +17,10 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
-	"github.com/maxghenis/openmessage/internal/app"
-	"github.com/maxghenis/openmessage/internal/client"
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/whatsapplive"
+	"github.com/jamesdowzard/txt/internal/app"
+	"github.com/jamesdowzard/txt/internal/client"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/whatsapplive"
 )
 
 type testServer struct {

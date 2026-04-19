@@ -13,11 +13,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maxghenis/openmessage/internal/client"
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/importer"
-	"github.com/maxghenis/openmessage/internal/signallive"
-	"github.com/maxghenis/openmessage/internal/whatsapplive"
+	"github.com/jamesdowzard/txt/internal/client"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/importer"
+	"github.com/jamesdowzard/txt/internal/signallive"
+	"github.com/jamesdowzard/txt/internal/whatsapplive"
 )
 
 // BackfillPhase represents the current phase of a deep backfill.

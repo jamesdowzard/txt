@@ -3,7 +3,7 @@ package viz
 import (
 	"testing"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 func TestFindMediaMessages(t *testing.T) {

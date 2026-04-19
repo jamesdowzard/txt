@@ -10,7 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 
-	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/jamesdowzard/txt/internal/app"
 )
 
 func sendGroupMessageTool() mcp.Tool {

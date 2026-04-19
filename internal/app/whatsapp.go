@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/whatsapplive"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/whatsapplive"
 )
 
 func (a *App) ensureWhatsApp() (*whatsapplive.Bridge, error) {

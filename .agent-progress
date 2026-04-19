@@ -1,10 +1,10 @@
-# Agent Progress - imessage-outbound-composer
+# Agent Progress - detach-upstream
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T06:53:53Z
+# Created: 2026-04-19T07:34:13Z
 
-feature=imessage-outbound-composer
-name=Unlock iMessage composer
+feature=detach-upstream
+name=Detach from upstream openmessage
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T06:53:53Z
+created=2026-04-19T07:34:13Z

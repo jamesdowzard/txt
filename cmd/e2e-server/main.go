@@ -14,8 +14,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/web"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/web"
 )
 
 const (

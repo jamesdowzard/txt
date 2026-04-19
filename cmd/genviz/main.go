@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/story"
-	"github.com/maxghenis/openmessage/internal/viz"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/story"
+	"github.com/jamesdowzard/txt/internal/viz"
 )
 
 func main() {

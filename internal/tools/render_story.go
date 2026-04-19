@@ -11,9 +11,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/maxghenis/openmessage/internal/app"
-	"github.com/maxghenis/openmessage/internal/story"
-	"github.com/maxghenis/openmessage/internal/viz"
+	"github.com/jamesdowzard/txt/internal/app"
+	"github.com/jamesdowzard/txt/internal/story"
+	"github.com/jamesdowzard/txt/internal/viz"
 )
 
 func renderStoryTool() mcp.Tool {

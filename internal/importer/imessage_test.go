@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maxghenis/openmessage/internal/contacts"
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/contacts"
+	"github.com/jamesdowzard/txt/internal/db"
 
 	_ "modernc.org/sqlite"
 )

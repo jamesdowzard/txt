@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 // writeConversationExport serialises a conversation + its (chronologically

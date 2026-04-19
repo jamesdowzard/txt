@@ -1,38 +1,27 @@
-# Textbridge
+# txt
 
-Read and reply to Google Messages (SMS + RCS) from your Mac. Native Tauri app, local-first, no cloud dependency beyond Google's own Messages Web protocol.
-
-Forked from [MaxGhenis/openmessage](https://github.com/MaxGhenis/openmessage) and retargeted for a single-user workflow: Google Messages only, frosted-dark aesthetic, signed Tauri desktop app.
+Personal multi-platform messages app for macOS. Native Tauri shell + Go backend reading from Google Messages, iMessage (chat.db), and legacy Signal/WhatsApp importers. Local-first, single-user.
 
 ## What it does
 
-- **Google Messages for Mac** — pair your Android phone once, read/send SMS + RCS locally
-- **Native Tauri app** — lives in `/Applications/Textbridge.app`, backend Go binary bundled inside
-- **Local-first** — messages cached in SQLite at `~/Library/Application Support/ai.james-is-an.textbridge/`
-- **MCP-ready** — optional MCP SSE + stdio endpoints for Claude Code integration
+- **Google Messages for Mac** — pair an Android phone once, read/send SMS + RCS locally (via mautrix `libgm`)
+- **iMessage two-way** — reads `~/Library/Messages/chat.db`, sends via osascript to `Messages.app`
+- **Local-first** — everything cached in SQLite at `~/Library/Application Support/ai.james-is-an.textbridge/`
+- **MCP-ready** — optional MCP SSE + stdio endpoints for Claude Code
 
-## Built on
-
-- [mautrix/gmessages](https://github.com/mautrix/gmessages) `libgm` — Google Messages Web protocol client
-- [Tauri 2](https://tauri.app/) — native desktop shell (Rust + TypeScript)
-- [mcp-go](https://github.com/mark3labs/mcp-go) — MCP server
+Bundle is `/Applications/txt.app` (bundle ID `ai.james-is-an.textbridge`, sidecar binary `textbridge-backend` — both kept for codesign/data continuity).
 
 ## Repo layout
 
 ```
-textbridge/
+txt/
 ├── main.go, cmd/, internal/   # Go backend (libgm, SQLite, HTTP + MCP)
 │                              # Produces the textbridge-backend binary
+├── web/                       # Vite + Preact + HTM UI (embedded via go:embed)
 ├── desktop/                   # Tauri 2 macOS app
-│   ├── src/                   # TypeScript frontend (minimal loader)
 │   ├── src-tauri/             # Rust shell — spawns sidecar, owns window
-│   │   └── binaries/          # Sidecar Go binary (gitignored, built via script)
-│   ├── scripts/
-│   │   ├── build-sidecar      # Compile Go backend for current arch
-│   │   ├── dev                # Deploy dev variant → /Applications/Textbridge-dev.app
-│   │   └── release            # Deploy stable → /Applications/Textbridge.app
-│   └── release/               # Built app bundles (gitignored)
-└── internal/web/static/       # Web UI loaded inside the Tauri WebView
+│   └── scripts/               # build-sidecar, dev, release
+└── internal/web/static/dist/  # Vite build output served by Go
 ```
 
 ## Quick start
@@ -44,35 +33,25 @@ textbridge/
 - [Rust](https://rustup.rs/) + [Bun](https://bun.sh/)
 - [Tauri CLI 2](https://tauri.app/start/prerequisites/): `cargo install tauri-cli@2`
 - [fileicon](https://github.com/mklement0/fileicon): `brew install fileicon`
-- Google Messages installed on an Android phone
+- Google Messages on an Android phone (optional, for that route)
 
-### 1. Pair with your phone (one-time)
+### 1. Pair with your phone (one-time, Google Messages only)
 
 ```bash
-go build -o textbridge .
-./textbridge pair
+go build -o txt .
+./txt pair
 ```
 
 Open Google Messages on Android → profile → **Device pairing** → **Pair a device** → scan the terminal QR.
 
-Session saves to `~/.local/share/openmessage/session.json`. Copy it to the app's data dir before first launch:
-
-```bash
-mkdir -p "$HOME/Library/Application Support/ai.james-is-an.textbridge"
-cp "$HOME/.local/share/openmessage/session.json" \
-   "$HOME/Library/Application Support/ai.james-is-an.textbridge/session.json"
-```
-
-### 2. Build and install the Tauri app
+### 2. Build and install
 
 ```bash
 cd desktop
 bun install
 ./scripts/build-sidecar      # Compile Go backend into src-tauri/binaries/
-./scripts/release patch      # Build, sign, install to /Applications/Textbridge.app
+./scripts/release patch      # Build, sign, install to /Applications/txt.app
 ```
-
-Launch from `/Applications/Textbridge.app` or via Spotlight.
 
 ### Dev loop
 
@@ -81,17 +60,17 @@ cd desktop
 ./scripts/dev --launch       # Build orange dev variant, deploy, launch
 ```
 
-Stable and dev can coexist — different bundle IDs, separate data dirs.
+Stable and dev coexist via different bundle IDs + data dirs.
 
 ## Development
 
-- **Web UI**: `web/` (Vite + Preact + HTM). `bun run build` writes to `internal/web/static/dist/`, which is embedded into the Go binary via `go:embed`. Legacy single-file UI is being peeled into components — see `docs/plans/2026-04-17-textbridge-roadmap.md`.
-- **Rust shell** (window + sidecar lifecycle): `desktop/src-tauri/src/lib.rs`
-- **Go backend** (libgm, HTTP, MCP): `main.go`, `cmd/`, `internal/`
-- **Feature branches only** — use `/f:new` and `/f:ship` for all changes
+- **Web UI**: `web/` (Vite + Preact + HTM). `bun run build` writes to `internal/web/static/dist/`, embedded via `go:embed`.
+- **Rust shell**: `desktop/src-tauri/src/lib.rs`
+- **Go backend**: `main.go`, `cmd/`, `internal/`
+- **Feature branches only** — use `/f:new` and `/f:ship`.
 
-See `desktop/CLAUDE.md` for Tauri-specific gotchas (xattr bundle issue, CORS probe trick).
+See `CLAUDE.md` for iMessage internals and Tauri gotchas.
 
 ## License
 
-Inherits from upstream openmessage (Unlicense / public domain). `libgm` dependency is AGPL-3.0; we run it as a separate sidecar process, which keeps the Rust/TypeScript shell unencumbered by its copyleft.
+Unlicense / public domain. `libgm` (AGPL-3.0) runs as a separate sidecar process to keep the shell free of copyleft.

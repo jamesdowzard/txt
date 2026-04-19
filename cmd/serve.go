@@ -16,12 +16,12 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/term"
 
-	"github.com/maxghenis/openmessage/internal/app"
-	"github.com/maxghenis/openmessage/internal/db"
-	"github.com/maxghenis/openmessage/internal/importer"
-	"github.com/maxghenis/openmessage/internal/notify"
-	"github.com/maxghenis/openmessage/internal/tools"
-	"github.com/maxghenis/openmessage/internal/web"
+	"github.com/jamesdowzard/txt/internal/app"
+	"github.com/jamesdowzard/txt/internal/db"
+	"github.com/jamesdowzard/txt/internal/importer"
+	"github.com/jamesdowzard/txt/internal/notify"
+	"github.com/jamesdowzard/txt/internal/tools"
+	"github.com/jamesdowzard/txt/internal/web"
 )
 
 type serveOptions struct {
@@ -280,7 +280,7 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 
 	// Create MCP server
 	mcpSrv := mcpserver.NewMCPServer(
-		"openmessage",
+		"txt",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
 	)

@@ -65,7 +65,6 @@ Before starting *any* item in this plan:
 **Non-goals for Phase 0:**
 - No new features. Pure refactor.
 - No framework choice beyond what's needed. Use **Preact + HTM + UnoCSS** (lightweight, no JSX compile for simple components, tiny runtime). If that feels wrong in practice, pivot to **Lit** — don't get into frameworks debate.
-- Do not touch `site/` (upstream marketing).
 - Do not rewrite CSS tokens (`:root` block at index.html:9-40). Copy verbatim into a `tokens.css`.
 
 **Risk:** The WebView's `window.location.replace('http://127.0.0.1:7007')` navigation means the Tauri shell's probe must still succeed. Verify by running `./scripts/dev --launch` at every major step.

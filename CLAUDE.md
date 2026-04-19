@@ -1,11 +1,11 @@
 # txt
 
-Native Tauri macOS app (bundle name `txt.app`, bundle ID `ai.james-is-an.textbridge`) wrapping a Go backend that reads + sends across Google Messages, iMessage, and the legacy Signal/WhatsApp importers. Forked from [MaxGhenis/openmessage](https://github.com/MaxGhenis/openmessage) and retargeted as a personal multi-platform reader. The Go binary is still named `textbridge-backend` for historical/codesign continuity — only the visible app name changed to `txt`.
+Native Tauri macOS app (bundle name `txt.app`, bundle ID `ai.james-is-an.textbridge`) wrapping a Go backend that reads + sends across Google Messages, iMessage, and the legacy Signal/WhatsApp importers. Personal single-user app. The bundle ID and the Go binary name (`textbridge-backend`) are retained for codesign and data-dir continuity with earlier builds — only the visible app name and Go module path changed.
 
 ## Architecture
 
 ```
-textbridge/
+txt/
 ├── main.go                # Go entrypoint (CLI: pair, serve, send, import)
 ├── cmd/                   # Go command implementations
 ├── internal/
@@ -20,13 +20,12 @@ textbridge/
 │   ├── index.html         # HTML shell
 │   ├── public/            # Static assets copied verbatim to dist/
 │   └── src/               # main.ts + legacy.{js,css} + styles/
-├── desktop/               # Tauri 2 macOS app
-│   ├── src-tauri/         # Rust shell: spawns sidecar, owns window
-│   │   ├── src/lib.rs     # Sidecar lifecycle
-│   │   └── binaries/      # Go backend binary (gitignored)
-│   ├── src/               # TypeScript loader (image-probe then navigate to backend)
-│   └── scripts/           # build-sidecar, dev, release
-└── site/                  # (legacy) upstream's marketing site — not used here
+└── desktop/               # Tauri 2 macOS app
+    ├── src-tauri/         # Rust shell: spawns sidecar, owns window
+    │   ├── src/lib.rs     # Sidecar lifecycle
+    │   └── binaries/      # Go backend binary (gitignored)
+    ├── src/               # TypeScript loader (image-probe then navigate to backend)
+    └── scripts/           # build-sidecar, dev, release
 ```
 
 ## iMessage support
@@ -48,8 +47,8 @@ textbridge/
 # Web UI (Vite build output goes to internal/web/static/dist/)
 cd web && bun install && bun run build
 
-# Go backend (produces ./textbridge; embeds the Vite dist)
-go build -o textbridge .
+# Go backend (produces ./txt; embeds the Vite dist)
+go build -o txt .
 
 # Tauri app — build-sidecar runs the web build automatically
 cd desktop
@@ -67,13 +66,13 @@ Signing: `Developer ID Application: James Dowzard (G54DLMPV94)`. Bundle ID: `ai.
 | Path | Contents |
 |------|----------|
 | `~/Library/Application Support/ai.james-is-an.textbridge/` | Active app data (session, messages.db) |
-| `~/.local/share/openmessage/` | Legacy location (`./textbridge pair` writes here) |
+| `~/.local/share/openmessage/` | Legacy location (`./txt pair` writes here — dir name is historical) |
 
 The Tauri shell passes `OPENMESSAGES_DATA_DIR` → Go sidecar, pointing at the first path.
 
 ## Google-only mode (sender-side only)
 
-The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync (read + send) still runs unconditionally. CLI `./textbridge serve` without the flag retains upstream multi-platform behaviour.
+The Tauri shell launches the sidecar with `TEXTBRIDGE_GOOGLE_ONLY=1`, which skips the WhatsApp + Signal live-bridge connects and the WhatsApp Native / Signal Desktop importers. iMessage sync (read + send) still runs unconditionally. CLI `./txt serve` without the flag retains the full multi-platform code path (kept for debugging).
 
 **One-off cleanup** after first upgrade: any WhatsApp/Signal conversations previously imported still live in `~/Library/Application Support/ai.james-is-an.textbridge/messages.db`. Move the file to Trash and re-pair Google Messages for a clean list. Bridge-era session leftovers (`signal-cli/`, `whatsapp-session.db`) and the 75 MB legacy `~/.local/share/openmessage/` dir can be cleared with `desktop/scripts/cleanup-bridges` (dry-run by default; pass `--apply` to commit).
 
@@ -113,17 +112,6 @@ The Tauri app must be running (it owns the backend on port 7007). MCP config liv
 ```bash
 go test ./cmd/ -v
 go test ./... -v
-```
-
-## Upstream sync
-
-Upstream is `MaxGhenis/openmessage` (fetched as remote `upstream`). To pull upstream fixes:
-
-```bash
-git fetch upstream
-git merge upstream/main   # expect conflicts on README, CLAUDE.md. Upstream's internal/web/static/index.html
-                          # no longer exists on this fork — the source of truth is web/ (Vite + Preact).
-                          # Port upstream UI changes by patching web/src/legacy.{js,css} or the relevant component.
 ```
 
 ## Key files

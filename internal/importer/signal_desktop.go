@@ -23,7 +23,7 @@ import (
 
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 var (

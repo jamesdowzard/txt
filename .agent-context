@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Unlock iMessage composer
-conversationSupportsOutbound excluded imessage so the composer was read-only even though /api/send already routes to Messages.app via osascript. Flip the flag.
+Detach from upstream openmessage
+Rename Go module to github.com/jamesdowzard/txt, strip upstream refs from docs, remove upstream git remote, detach GitHub fork relationship. Keep bundle ID + binary name for codesign/data continuity.
 
 ## Current State
 Not started. No work has been done yet.

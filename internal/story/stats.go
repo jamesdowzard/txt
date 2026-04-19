@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/jamesdowzard/txt/internal/db"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maxghenis/openmessage/internal/app"
+	"github.com/jamesdowzard/txt/internal/app"
 )
 
 func RunSend(logger zerolog.Logger, conversationID, message string) error {
