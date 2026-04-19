@@ -20,6 +20,7 @@ import (
 	"github.com/jamesdowzard/txt/internal/db"
 	"github.com/jamesdowzard/txt/internal/importer"
 	"github.com/jamesdowzard/txt/internal/notify"
+	"github.com/jamesdowzard/txt/internal/scheduler"
 	"github.com/jamesdowzard/txt/internal/tools"
 	"github.com/jamesdowzard/txt/internal/web"
 )
@@ -299,7 +300,7 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		return a.GoogleStatus()
 	}
 
-	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, web.APIOptions{
+	apiOpts := web.APIOptions{
 		Client:             a.GetClient,
 		Events:             events,
 		IdentityName:       identityName,
@@ -332,7 +333,8 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		StartDeepBackfill:     a.StartDeepBackfill,
 		BackfillStatus:        func() any { return a.GetBackfillProgress() },
 		BackfillPhone:         a.BackfillConversationByPhone,
-	})
+	}
+	httpHandler := web.APIHandlerWithOptions(a.Store, nil, logger, sseSrv, apiOpts)
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", listenAddr, err)
@@ -356,10 +358,15 @@ func RunServe(logger zerolog.Logger, args ...string) error {
 		logger.Debug().Msg("Skipping MCP stdio transport on interactive terminal")
 	}
 
-	// Outbox dispatcher (scheduled send)
-	outboxCtx, cancelOutbox := context.WithCancel(context.Background())
-	defer cancelOutbox()
-	a.StartOutboxDispatcher(outboxCtx)
+	// Scheduled-send dispatcher. Polls scheduled_messages every 30s; due rows
+	// get routed through the same TextSender /api/send uses, so there's one
+	// send code path for immediate + scheduled.
+	schedCtx, cancelSched := context.WithCancel(context.Background())
+	defer cancelSched()
+	textSender := web.NewTextSender(a.Store, logger, apiOpts)
+	go scheduler.Run(schedCtx, a.Store, schedulerSenderAdapter{textSender}, scheduler.Config{
+		Logger: logger,
+	})
 
 	// Daily SQLite snapshot into <DataDir>/backups/. Runs one immediately
 	// if today's backup is missing, then every 24h. See internal/app/backup.go.
@@ -460,6 +467,20 @@ func publicHost(host string) string {
 
 var runtimeGOOS = func() string {
 	return runtime.GOOS
+}
+
+// schedulerSenderAdapter bridges *web.TextSender (returning TextSendResult) to
+// the scheduler.Sender interface (returning bare messageID string).
+type schedulerSenderAdapter struct {
+	ts *web.TextSender
+}
+
+func (a schedulerSenderAdapter) SendText(conversationID, body, replyToID string) (string, error) {
+	res, err := a.ts.SendText(conversationID, body, replyToID)
+	if err != nil {
+		return "", err
+	}
+	return res.MessageID, nil
 }
 
 func logSyncError(logger zerolog.Logger, lastImportErr map[string]string, platform string, err error) {

@@ -1337,70 +1337,83 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 		})
 	})
 
-	// Outbox: scheduled send queue. POST creates a pending item; GET lists; DELETE
-	// /:id cancels a pending item. Items dispatch via app.StartOutboxDispatcher.
-	mux.HandleFunc("/api/outbox", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			var req struct {
-				ConversationID string `json:"conversation_id"`
-				Body           string `json:"body"`
-				SendAt         int64  `json:"send_at"` // unix seconds
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				httpError(w, "invalid JSON: "+err.Error(), 400)
-				return
-			}
-			if req.ConversationID == "" || req.Body == "" {
-				httpError(w, "conversation_id and body are required", 400)
-				return
-			}
-			if req.SendAt <= time.Now().Unix() {
-				httpError(w, "send_at must be in the future", 400)
-				return
-			}
-			item := &db.OutboxItem{
-				ConversationID: req.ConversationID,
-				Body:           req.Body,
-				SendAt:         req.SendAt,
-			}
-			if _, err := store.CreateOutboxItem(item); err != nil {
-				httpError(w, "create outbox item: "+err.Error(), 500)
-				return
-			}
-			writeJSON(w, item)
-		case http.MethodGet:
-			status := r.URL.Query().Get("status") // optional filter
-			items, err := store.ListOutboxItems(status, 200)
-			if err != nil {
-				httpError(w, "list outbox: "+err.Error(), 500)
-				return
-			}
-			if items == nil {
-				items = []*db.OutboxItem{}
-			}
-			writeJSON(w, items)
-		default:
+	// POST /api/schedule — enqueue a future send. GET /api/outbox lists pending
+	// + failed rows. DELETE /api/schedule/{id} cancels a pending row. Rows are
+	// drained by the scheduler goroutine started in cmd/serve.go.
+	mux.HandleFunc("/api/schedule", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
 			httpError(w, "method not allowed", 405)
+			return
 		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+			Body           string `json:"body"`
+			ScheduledAt    int64  `json:"scheduled_at"` // unix milliseconds
+			ReplyToID      string `json:"reply_to_id,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, "invalid JSON: "+err.Error(), 400)
+			return
+		}
+		if req.ConversationID == "" || strings.TrimSpace(req.Body) == "" {
+			httpError(w, "conversation_id and body are required", 400)
+			return
+		}
+		// Require >=1 minute in the future to match the UI guardrail and to
+		// give the 30s poll loop at least one chance to miss-and-retry before
+		// a human would notice.
+		if req.ScheduledAt <= time.Now().Add(30*time.Second).UnixMilli() {
+			httpError(w, "scheduled_at must be at least 1 minute in the future", 400)
+			return
+		}
+		saved, err := store.CreateScheduledMessage(&db.ScheduledMessage{
+			ConversationID: req.ConversationID,
+			Body:           req.Body,
+			ReplyToID:      req.ReplyToID,
+			ScheduledAt:    req.ScheduledAt,
+		})
+		if err != nil {
+			httpError(w, "create scheduled message: "+err.Error(), 500)
+			return
+		}
+		writeJSON(w, saved)
 	})
 
-	mux.HandleFunc("/api/outbox/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/outbox", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "method not allowed", 405)
+			return
+		}
+		items, err := store.ListOutboxMessages()
+		if err != nil {
+			httpError(w, "list outbox: "+err.Error(), 500)
+			return
+		}
+		if items == nil {
+			items = []*db.ScheduledMessage{}
+		}
+		writeJSON(w, items)
+	})
+
+	mux.HandleFunc("/api/schedule/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			httpError(w, "method not allowed", 405)
 			return
 		}
-		idStr := strings.TrimPrefix(r.URL.Path, "/api/outbox/")
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/schedule/")
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil || id <= 0 {
-			httpError(w, "invalid outbox id", 400)
+			httpError(w, "invalid schedule id", 400)
 			return
 		}
-		if err := store.DeleteOutboxItem(id); err != nil {
-			httpError(w, "delete outbox item: "+err.Error(), 500)
+		cancelled, err := store.CancelScheduledMessage(id)
+		if err != nil {
+			httpError(w, "cancel scheduled message: "+err.Error(), 500)
 			return
 		}
-		writeJSON(w, map[string]string{"status": "ok"})
+		// Distinguish "cancelled now" from "already sent/failed/cancelled" —
+		// frontend uses this to decide whether to grey out or hide the row.
+		writeJSON(w, map[string]any{"cancelled": cancelled})
 	})
 
 	mux.HandleFunc("/api/mark-read", func(w http.ResponseWriter, r *http.Request) {
