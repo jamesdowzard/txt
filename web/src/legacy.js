@@ -262,13 +262,20 @@
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   }
 
+  const PLATFORM_ICONS = {
+    sms: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"/></svg>',
+    imessage: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3C6.5 3 2 6.58 2 11c0 2.43 1.4 4.6 3.6 6.07V21l3.3-2.1c1 .26 2.05.4 3.1.4 5.5 0 10-3.58 10-8s-4.5-8-10-8Z"/></svg>',
+    gchat: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.4 4H3.6A1.6 1.6 0 0 0 2 5.6v12.8A1.6 1.6 0 0 0 3.6 20h16.8a1.6 1.6 0 0 0 1.6-1.6V5.6A1.6 1.6 0 0 0 20.4 4ZM12 13.5l-8-5V6l8 5 8-5v2.5l-8 5Z"/></svg>',
+    telegram: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.04 15.54l-.36 5.06c.52 0 .74-.22 1.01-.48l2.42-2.31 5.02 3.67c.92.51 1.57.24 1.82-.85l3.3-15.46c.29-1.36-.49-1.89-1.39-1.56L1.55 10.7c-1.33.52-1.31 1.27-.23 1.61l4.92 1.54 11.42-7.2c.54-.33 1.03-.15.63.21L9.04 15.54Z"/></svg>',
+  };
+
   const PLATFORM_META = {
-    sms: { label: 'SMS', short: 'SMS', css: 'sms' },
+    sms: { label: 'SMS', short: 'SMS', css: 'sms', icon: PLATFORM_ICONS.sms },
     whatsapp: { label: 'WhatsApp', short: 'WHATSAPP', css: 'whatsapp', chipAsset: '/platform-whatsapp.svg' },
-    imessage: { label: 'iMessage', short: 'IM', css: 'imessage' },
-    gchat: { label: 'Google Chat', short: 'GC', css: 'gchat' },
+    imessage: { label: 'iMessage', short: 'IM', css: 'imessage', icon: PLATFORM_ICONS.imessage },
+    gchat: { label: 'Google Messages', short: 'GC', css: 'gchat', icon: PLATFORM_ICONS.gchat },
     signal: { label: 'Signal', short: 'SIGNAL', css: 'signal', chipAsset: '/platform-signal.svg' },
-    telegram: { label: 'Telegram', short: 'TG', css: 'telegram' },
+    telegram: { label: 'Telegram', short: 'TG', css: 'telegram', icon: PLATFORM_ICONS.telegram },
   };
 
   const PLATFORM_ORDER = ['sms', 'whatsapp', 'imessage', 'gchat', 'signal', 'telegram'];
@@ -297,6 +304,9 @@
     const extraClass = variant === 'avatar' ? ' platform-chip--avatar' : '';
     if (meta.chipAsset) {
       return `<span class="platform-chip platform-chip--${meta.css} platform-chip--icon-only${extraClass}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}"><span class="platform-chip-logo" aria-hidden="true"><img class="platform-chip-image" src="${escapeHtml(meta.chipAsset)}" alt=""></span><span class="sr-only">${escapeHtml(meta.label)}</span></span>`;
+    }
+    if (meta.icon && variant !== 'header') {
+      return `<span class="platform-chip platform-chip--${meta.css} platform-chip--icon-only${extraClass}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}"><span class="platform-chip-logo" aria-hidden="true">${meta.icon}</span><span class="sr-only">${escapeHtml(meta.label)}</span></span>`;
     }
     const label = variant === 'header' ? meta.label : meta.short;
     return `<span class="platform-chip platform-chip--${meta.css}${extraClass}" title="${escapeHtml(meta.label)}">${escapeHtml(label)}</span>`;
@@ -5092,6 +5102,13 @@
     if (mod && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
       openCommandPalette();
+      return;
+    }
+
+    // ── Cmd/Ctrl+T : New message composer ──
+    if (mod && (e.key === 't' || e.key === 'T')) {
+      e.preventDefault();
+      openNewMsg();
       return;
     }
 

@@ -2,8 +2,8 @@
 # Max 20 lines. Updated by agent on Stop hook.
 
 ## Feature
-Pigeon-style chrome: no traffic lights + tabs
-Hide macOS traffic lights, add drag region. Persistent tab strip at top with open conversations, Cmd+W close, Cmd+1-9 switch.
+Cmd+T new msg + sidebar platform icons
+Bind Cmd+T to openNewMsg(). Add small platform badge icon to conversation rows in the sidebar.
 
 ## Current State
 Not started. No work has been done yet.
