@@ -20,7 +20,10 @@
         "minWidth": 800,
         "minHeight": 500,
         "center": true,
-        "resizable": true
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": -100, "y": -100 }
       }
     ],
     "security": {

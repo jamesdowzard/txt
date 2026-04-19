@@ -1,10 +1,10 @@
-# Agent Progress - fix-menu-color
+# Agent Progress - pigeon-chrome
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T08:51:28Z
+# Created: 2026-04-19T08:55:27Z
 
-feature=fix-menu-color
-name=Context menu colour match
+feature=pigeon-chrome
+name=Pigeon-style chrome: no traffic lights + tabs
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T08:51:28Z
+created=2026-04-19T08:55:27Z

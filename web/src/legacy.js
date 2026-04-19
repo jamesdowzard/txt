@@ -2657,6 +2657,7 @@
     activeConvoId = convo.ConversationID;
     if (!DETACHED_MODE) persistLastConvoId(activeConvoId);
     activeConversation = convo;
+    window.dispatchEvent(new CustomEvent('txt:conversation-activated', { detail: { id: convo.ConversationID } }));
     pendingDeepLinkConversationID = '';
     syncConversationURL(convo.ConversationID);
 
@@ -5594,5 +5595,119 @@
 
   // Expose so the earlier keydown handler can call it
   window.openCommandPalette = openCommandPalette;
+
+  // ─── Conversation tab strip ───
+  const TAB_STORAGE_KEY = 'txt_open_tabs_v1';
+  const $tabStrip = document.getElementById('tab-strip');
+  let openTabIds = loadOpenTabs();
+
+  function loadOpenTabs() {
+    try {
+      const raw = localStorage.getItem(TAB_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+    } catch { return []; }
+  }
+
+  function persistOpenTabs() {
+    try { localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(openTabIds)); } catch {}
+  }
+
+  function tabConversationById(id) {
+    return (allConversations || []).find((c) => c.ConversationID === id) || null;
+  }
+
+  function renderTabs() {
+    if (!$tabStrip) return;
+    $tabStrip.innerHTML = '';
+    openTabIds.forEach((id) => {
+      const conv = tabConversationById(id);
+      const label = conv ? (conv.Name || conversationDisplayName?.(conv) || 'Conversation') : id;
+      const el = document.createElement('div');
+      el.className = 'tab' + (id === activeConvoId ? ' active' : '');
+      el.setAttribute('role', 'tab');
+      el.dataset.tabId = id;
+      el.innerHTML = `<span class="tab-label">${escapeHtml(label)}</span><button class="tab-close" type="button" aria-label="Close tab">×</button>`;
+      el.addEventListener('click', (e) => {
+        if (e.target.classList?.contains('tab-close')) return;
+        if (e.button === 1) { closeTab(id); return; }
+        const c = tabConversationById(id);
+        if (c) selectConversation(c);
+      });
+      el.addEventListener('auxclick', (e) => {
+        if (e.button === 1) { e.preventDefault(); closeTab(id); }
+      });
+      el.querySelector('.tab-close').addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeTab(id);
+      });
+      $tabStrip.appendChild(el);
+    });
+  }
+
+  function openTab(id) {
+    if (!id) return;
+    if (!openTabIds.includes(id)) {
+      openTabIds.push(id);
+      persistOpenTabs();
+    }
+    renderTabs();
+  }
+
+  function closeTab(id) {
+    const idx = openTabIds.indexOf(id);
+    if (idx < 0) return;
+    openTabIds.splice(idx, 1);
+    persistOpenTabs();
+    if (activeConvoId === id) {
+      const next = openTabIds[idx] || openTabIds[idx - 1] || null;
+      if (next) {
+        const c = tabConversationById(next);
+        if (c) selectConversation(c);
+        else renderTabs();
+      } else {
+        activeConvoId = null;
+        activeConversation = null;
+        if ($emptyState) $emptyState.style.display = 'flex';
+        if ($chatHeader) $chatHeader.style.display = 'none';
+        if ($messagesArea) $messagesArea.style.display = 'none';
+        if ($composeBar) $composeBar.style.display = 'none';
+        renderTabs();
+      }
+    } else {
+      renderTabs();
+    }
+  }
+
+  // selectConversation is declared with function-statement syntax under "use
+  // strict" — can't reassign. Instead, listen for the sidebar-selection-state
+  // sync event that fires at the end of selectConversation, and add/activate
+  // the corresponding tab then.
+  window.addEventListener('txt:conversation-activated', (e) => {
+    if (e?.detail?.id) openTab(e.detail.id);
+    else renderTabs();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const meta = e.metaKey || e.ctrlKey;
+    if (!meta) return;
+    if (e.key === 'w' || e.key === 'W') {
+      if (activeConvoId) { e.preventDefault(); closeTab(activeConvoId); }
+      return;
+    }
+    if (/^[1-9]$/.test(e.key)) {
+      const idx = parseInt(e.key, 10) - 1;
+      const id = openTabIds[idx];
+      if (id) {
+        e.preventDefault();
+        const c = tabConversationById(id);
+        if (c) selectConversation(c);
+      }
+    }
+  });
+
+  // Initial paint — conversations may not have loaded yet; re-render once they do.
+  renderTabs();
+  document.addEventListener('conversations:loaded', renderTabs);
 
 })();
