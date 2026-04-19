@@ -1622,49 +1622,237 @@ html, body {
 .schedule-btn:disabled { opacity: 0.3; cursor: default; }
 .schedule-btn svg { width: 18px; height: 18px; }
 
-.schedule-menu {
-  position: absolute;
-  bottom: 64px;
-  right: 80px;
+/* Schedule popover (datetime-local picker) */
+.schedule-popover {
+  position: fixed;
   background: var(--panel-strong);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-accent);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-soft);
-  padding: 6px;
+  padding: 12px 14px;
   display: none;
   flex-direction: column;
-  min-width: 180px;
-  z-index: 200;
+  gap: 10px;
+  min-width: 240px;
+  z-index: 500;
 }
-.schedule-menu.show { display: flex; }
-.schedule-menu button {
-  background: none;
-  border: none;
+.schedule-popover.show { display: flex; }
+
+.schedule-popover-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.schedule-datetime-input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  text-align: left;
-  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+  color-scheme: dark;
+}
+.schedule-datetime-input:focus {
+  border-color: var(--border-accent);
+}
+
+.schedule-popover-error {
+  font-size: 12px;
+  color: #ff6b6b;
+  min-height: 0;
+}
+.schedule-popover-error:empty { display: none; }
+
+.schedule-popover-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.schedule-popover-btn-cancel,
+.schedule-popover-btn-submit {
+  border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 5px 12px;
+}
+.schedule-popover-btn-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.schedule-popover-btn-cancel:hover { color: var(--text-primary); background: var(--bg-hover); }
+.schedule-popover-btn-submit {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+.schedule-popover-btn-submit:hover { background: var(--bg-hover); }
+
+/* Outbox nav row (sidebar) */
+.outbox-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 20px;
+  margin: 0 0 4px;
+  cursor: pointer;
+  border-radius: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+.outbox-nav-row:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+.outbox-nav-row.active {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+.outbox-nav-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.outbox-nav-label {
+  flex: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.outbox-nav-count {
+  background: var(--accent-dim);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* Outbox main pane view */
+.outbox-view {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.outbox-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 24px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.outbox-view-header svg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.7;
+}
+
+.outbox-view-empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
   font-size: 13px;
 }
-.schedule-menu button:hover { background: var(--bg-hover); }
 
-.outbox-banner {
-  padding: 6px 28px;
-  background: var(--accent-dim);
+.outbox-view-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.outbox-view-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
   border-bottom: 1px solid var(--border);
+  transition: background 100ms ease;
+}
+.outbox-view-row:hover { background: var(--accent-dim); }
+
+.outbox-row-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.outbox-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.outbox-row-body {
   font-size: 12px;
   color: var(--text-secondary);
-  display: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.outbox-banner.show { display: block; }
-.outbox-banner button {
+
+.outbox-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.outbox-row-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.outbox-row-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.outbox-status-pending {
+  background: rgba(255,255,255,0.07);
+  color: var(--text-secondary);
+}
+.outbox-status-failed {
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff6b6b;
+}
+.outbox-row-cancel {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 12px;
-  margin-left: 6px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-top: 2px;
+  border-radius: 4px;
+}
+.outbox-row-cancel:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 /* ─── Attachment Preview ─── */
