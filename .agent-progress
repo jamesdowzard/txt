@@ -1,10 +1,10 @@
-# Agent Progress - tauri-surface
+# Agent Progress - composer-polish
 # Format: KEY=VALUE, one per line. Agents append, last value wins.
-# Created: 2026-04-19T07:54:38Z
+# Created: 2026-04-19T07:54:35Z
 
-feature=tauri-surface
-name=URL scheme + Shortcuts App Intents
+feature=composer-polish
+name=Reactions send + reply threading + image paste
 status=pending
 step=0
 step_name=Not started
-created=2026-04-19T07:54:38Z
+created=2026-04-19T07:54:35Z

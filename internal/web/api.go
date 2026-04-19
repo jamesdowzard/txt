@@ -895,7 +895,7 @@ func APIHandlerWithOptions(store *db.Store, cli *client.Client, logger zerolog.L
 			return
 		}
 		if isIMessageConversation(req.ConversationID) {
-			msg, err := sendIMessageText(store, recordOutgoingMessage, req.ConversationID, req.Message)
+			msg, err := sendIMessageText(store, recordOutgoingMessage, req.ConversationID, req.Message, req.ReplyToID)
 			if err != nil {
 				httpError(w, "send imessage: "+err.Error(), 502)
 				return
@@ -2140,7 +2140,11 @@ func serveIMessageAttachment(w http.ResponseWriter, msg *db.Message) error {
 // Falls back to a synthetic "imessage-pending:" MessageID only if chat.db
 // hasn't surfaced the new row within ~2s — better to risk a temporary
 // duplicate later than to leave the UI without immediate feedback.
-func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) error, conversationID, message string) (*db.Message, error) {
+//
+// When replyToID is non-empty it is stored locally (so the UI's reply
+// banner renders immediately) and passed through to runAppleScriptSend,
+// which attempts the threaded-reply form; see runAppleScriptReply.
+func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) error, conversationID, message, replyToID string) (*db.Message, error) {
 	if conversationID == "" || strings.TrimSpace(message) == "" {
 		return nil, errors.New("conversation_id and message are required")
 	}
@@ -2155,6 +2159,7 @@ func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) 
 	if err != nil {
 		return nil, err
 	}
+	target.replyToGUID = strings.TrimPrefix(replyToID, "imessage:")
 	// Snapshot the wall clock 1s before send to absorb clock skew between
 	// our process and Messages.app's chat.db write.
 	sinceMS := time.Now().UnixMilli() - 1000
@@ -2172,6 +2177,7 @@ func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) 
 		Status:         "delivered",
 		IsFromMe:       true,
 		SourcePlatform: "imessage",
+		ReplyToID:      replyToID,
 	}
 	if canonicalGUID != "" {
 		msg.MessageID = "imessage:" + canonicalGUID
@@ -2205,9 +2211,10 @@ var pollForCanonicalGUID = func(chatGUID string, sinceMS int64) string {
 // imessageTarget is what runAppleScriptSend needs to address a chat: either
 // a single buddy handle (1:1) or the full chat.db chat GUID (group).
 type imessageTarget struct {
-	chatGUID string // group: e.g. "iMessage;+;chat<num>" — buddy ignored
-	buddy    string // 1:1: "+61..." or "user@me.com"
-	service  string // "iMessage" / "SMS" — only used when chatGUID is empty
+	chatGUID    string // group: e.g. "iMessage;+;chat<num>" — buddy ignored
+	buddy       string // 1:1: "+61..." or "user@me.com"
+	service     string // "iMessage" / "SMS" — only used when chatGUID is empty
+	replyToGUID string // optional: raw chat.db GUID of the message to reply to
 }
 
 // pickIMessageTarget decides how runAppleScriptSend should address the
@@ -2278,27 +2285,64 @@ func pickIMessageBuddy(conv *db.Conversation) (string, string, error) {
 // runAppleScriptSend invokes osascript to tell Messages.app to send a
 // message. The script intentionally does NOT activate Messages, so we don't
 // steal focus. Errors from osascript surface verbatim.
+//
+// When t.replyToGUID is set, we first try the documented threaded-reply
+// form (see buildReplyAppleScript). If that fails — older Messages.app
+// builds where `message id` isn't a valid send target, unknown GUID, etc. —
+// we fall back to a plain send. The UI's reply banner already renders from
+// our stored ReplyToID row, so the user still sees the quoted context even
+// if the wire-level threading silently degraded.
 func runAppleScriptSend(t imessageTarget, message string) error {
-	var script string
-	if t.chatGUID != "" {
-		script = fmt.Sprintf(`tell application "Messages"
-	send %q to chat id %q
-end tell`, message, t.chatGUID)
-	} else {
-		// service must be a literal AppleScript identifier (iMessage / SMS),
-		// not a quoted string — buddy + message are strings.
-		script = fmt.Sprintf(`tell application "Messages"
-	set targetService to first service whose service type = %s
-	set targetBuddy to buddy %q of targetService
-	send %q to targetBuddy
-end tell`, t.service, t.buddy, message)
+	if t.replyToGUID != "" {
+		cmd := exec.Command("osascript", "-e", buildReplyAppleScript(t, message))
+		if _, err := cmd.CombinedOutput(); err == nil {
+			return nil
+		}
+		// Silent fallthrough: plain send still delivers the text, and the
+		// local ReplyToID row gives the UI its quoted-context banner.
 	}
-	cmd := exec.Command("osascript", "-e", script)
+	cmd := exec.Command("osascript", "-e", buildSendAppleScript(t, message))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("osascript: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// buildSendAppleScript returns the AppleScript used to send a plain iMessage.
+// Extracted for testability.
+func buildSendAppleScript(t imessageTarget, message string) string {
+	if t.chatGUID != "" {
+		return fmt.Sprintf(`tell application "Messages"
+	send %q to chat id %q
+end tell`, message, t.chatGUID)
+	}
+	// service must be a literal AppleScript identifier (iMessage / SMS),
+	// not a quoted string — buddy + message are strings.
+	return fmt.Sprintf(`tell application "Messages"
+	set targetService to first service whose service type = %s
+	set targetBuddy to buddy %q of targetService
+	send %q to targetBuddy
+end tell`, t.service, t.buddy, message)
+}
+
+// buildReplyAppleScript returns the AppleScript used to send a threaded
+// reply. Modern Messages.app accepts `send <text> to message id <guid> of
+// <chat>` where <chat> resolves to a chat object — that anchors the send
+// as a reply to the quoted message. Extracted for testability.
+func buildReplyAppleScript(t imessageTarget, message string) string {
+	if t.chatGUID != "" {
+		return fmt.Sprintf(`tell application "Messages"
+	set targetChat to chat id %q
+	send %q to message id %q of targetChat
+end tell`, t.chatGUID, message, t.replyToGUID)
+	}
+	return fmt.Sprintf(`tell application "Messages"
+	set targetService to first service whose service type = %s
+	set targetBuddy to buddy %q of targetService
+	set targetChat to first chat whose participants contains targetBuddy
+	send %q to message id %q of targetChat
+end tell`, t.service, t.buddy, message, t.replyToGUID)
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {
