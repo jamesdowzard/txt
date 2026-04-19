@@ -251,8 +251,15 @@ func (im *IMessage) loadChats(chatDB *sql.DB, contactIdx contacts.Index) ([]imes
 		var c imessageChat
 		var style int
 		var lastDate int64
-		if err := rows.Scan(&c.rowID, &c.guid, &c.displayName, &style, &lastDate); err != nil {
+		var displayName sql.NullString
+		// chat.display_name is NULL for ~73% of chats in a real chat.db
+		// (every 1:1 + every group without a custom name). Pre-fix this
+		// scan failed → 135/185 chats silently dropped on import.
+		if err := rows.Scan(&c.rowID, &c.guid, &displayName, &style, &lastDate); err != nil {
 			continue
+		}
+		if displayName.Valid {
+			c.displayName = displayName.String
 		}
 		c.isGroup = style == 43 // iMessage group chat style
 		c.lastMessageTS = coreDataToMS(lastDate)

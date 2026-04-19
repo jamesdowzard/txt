@@ -2106,14 +2106,14 @@ func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) 
 	if conv == nil {
 		return nil, errors.New("conversation not found")
 	}
-	buddy, service, err := pickIMessageBuddy(conv)
+	target, err := pickIMessageTarget(conv)
 	if err != nil {
 		return nil, err
 	}
 	// Snapshot the wall clock 1s before send to absorb clock skew between
 	// our process and Messages.app's chat.db write.
 	sinceMS := time.Now().UnixMilli() - 1000
-	if err := runAppleScriptSend(buddy, service, message); err != nil {
+	if err := runAppleScriptSend(target, message); err != nil {
 		return nil, err
 	}
 	chatGUID := strings.TrimPrefix(conversationID, "imessage:")
@@ -2157,43 +2157,74 @@ var pollForCanonicalGUID = func(chatGUID string, sinceMS int64) string {
 	return ""
 }
 
-// pickIMessageBuddy reads the first participant from a conversation's
-// Participants JSON column. Returns the handle and the Messages service to
-// target ('iMessage' or 'SMS'). Group chats aren't supported yet — we'd
-// need the chat.db chat GUID, not a single buddy address.
-func pickIMessageBuddy(conv *db.Conversation) (string, string, error) {
+// imessageTarget is what runAppleScriptSend needs to address a chat: either
+// a single buddy handle (1:1) or the full chat.db chat GUID (group).
+type imessageTarget struct {
+	chatGUID string // group: e.g. "iMessage;+;chat<num>" — buddy ignored
+	buddy    string // 1:1: "+61..." or "user@me.com"
+	service  string // "iMessage" / "SMS" — only used when chatGUID is empty
+}
+
+// pickIMessageTarget decides how runAppleScriptSend should address the
+// conversation. Group chats use chat-by-id; 1:1 picks the first
+// participant handle.
+func pickIMessageTarget(conv *db.Conversation) (imessageTarget, error) {
 	if conv.IsGroup {
-		return "", "", errors.New("group iMessage send not supported yet")
+		// chat.db records groups as e.g. "any;+;chat<num>" but Messages.app's
+		// chat-by-id addressing wants the same suffix prefixed with a service
+		// name ("iMessage;+;chat..."). Normalise here.
+		guid := strings.TrimPrefix(conv.ConversationID, "imessage:")
+		if strings.HasPrefix(guid, "any;+;") {
+			guid = "iMessage;+;" + strings.TrimPrefix(guid, "any;+;")
+		}
+		if guid == "" {
+			return imessageTarget{}, errors.New("group conversation has no chat GUID")
+		}
+		return imessageTarget{chatGUID: guid}, nil
 	}
 	var parts []map[string]string
 	if err := json.Unmarshal([]byte(conv.Participants), &parts); err != nil {
-		return "", "", fmt.Errorf("parse participants: %w", err)
+		return imessageTarget{}, fmt.Errorf("parse participants: %w", err)
 	}
 	for _, p := range parts {
 		if number := strings.TrimSpace(p["number"]); number != "" {
-			service := "iMessage"
-			if !strings.Contains(number, "@") && !strings.HasPrefix(number, "+") {
-				// Plain digits are typically SMS-only — let Messages decide.
-				service = "iMessage"
-			}
-			return number, service, nil
+			return imessageTarget{buddy: number, service: "iMessage"}, nil
 		}
 	}
-	return "", "", errors.New("no participant handle found")
+	return imessageTarget{}, errors.New("no participant handle found")
+}
+
+// pickIMessageBuddy is a thin wrapper kept for backwards-compat with the
+// existing TestPickIMessageBuddy. New callers should use pickIMessageTarget.
+func pickIMessageBuddy(conv *db.Conversation) (string, string, error) {
+	t, err := pickIMessageTarget(conv)
+	if err != nil {
+		return "", "", err
+	}
+	if t.chatGUID != "" {
+		return "", "", errors.New("group iMessage send not supported via pickIMessageBuddy — use pickIMessageTarget")
+	}
+	return t.buddy, t.service, nil
 }
 
 // runAppleScriptSend invokes osascript to tell Messages.app to send a
 // message. The script intentionally does NOT activate Messages, so we don't
 // steal focus. Errors from osascript surface verbatim.
-func runAppleScriptSend(buddy, service, message string) error {
-	// service must be a literal AppleScript identifier (iMessage / SMS), not
-	// a string. buddy + message ARE strings, so use %q which produces an
-	// AppleScript-compatible quoted/escaped form.
-	script := fmt.Sprintf(`tell application "Messages"
+func runAppleScriptSend(t imessageTarget, message string) error {
+	var script string
+	if t.chatGUID != "" {
+		script = fmt.Sprintf(`tell application "Messages"
+	send %q to chat id %q
+end tell`, message, t.chatGUID)
+	} else {
+		// service must be a literal AppleScript identifier (iMessage / SMS),
+		// not a quoted string — buddy + message are strings.
+		script = fmt.Sprintf(`tell application "Messages"
 	set targetService to first service whose service type = %s
 	set targetBuddy to buddy %q of targetService
 	send %q to targetBuddy
-end tell`, service, buddy, message)
+end tell`, t.service, t.buddy, message)
+	}
 	cmd := exec.Command("osascript", "-e", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
