@@ -518,3 +518,70 @@ func TestIMessageImportFromDB_Reactions(t *testing.T) {
 		t.Error("reaction row leaked into messages table")
 	}
 }
+
+// TestLookupRecentOutgoingGUID covers the post-send chat.db lookup used by
+// /api/send to resolve the canonical GUID of a freshly-sent iMessage.
+func TestLookupRecentOutgoingGUID(t *testing.T) {
+	tempDir := t.TempDir()
+	chatDBPath := filepath.Join(tempDir, "chat.db")
+	chatDB, err := sql.Open("sqlite", chatDBPath)
+	if err != nil {
+		t.Fatalf("open chat.db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, uncanonicalized_id TEXT, service TEXT)`,
+		`CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, display_name TEXT, style INTEGER)`,
+		`CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER)`,
+		`CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER, is_read INTEGER DEFAULT 0, associated_message_type INTEGER DEFAULT 0, associated_message_guid TEXT DEFAULT '')`,
+		`CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER)`,
+		`INSERT INTO handle VALUES (1, '+61437590462', '+61437590462', 'iMessage')`,
+		`INSERT INTO chat VALUES (1, 'iMessage;-;+61437590462', '', 45)`,
+		`INSERT INTO chat_handle_join VALUES (1, 1)`,
+		// Old outgoing message at 700000000000000000 ns post-Core-Data epoch
+		// = 2023-03-08 in Unix terms; well before any sane sinceMS for a
+		// recent send, so should be filtered out by the date check.
+		`INSERT INTO message VALUES (1, 'old-out', 'hi', NULL, 700000000000000000, 1, NULL, 0, 0, '')`,
+		`INSERT INTO chat_message_join VALUES (1, 1)`,
+	}
+	for _, s := range stmts {
+		if _, err := chatDB.Exec(s); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+
+	// 1) Old-only row + sinceMS in the future → no match.
+	guid, err := LookupRecentOutgoingGUID(chatDBPath, "iMessage;-;+61437590462", time.Now().UnixMilli())
+	if err != nil {
+		t.Fatalf("lookup (no match): %v", err)
+	}
+	if guid != "" {
+		t.Errorf("expected no match, got %q", guid)
+	}
+
+	// 2) Insert a fresh outgoing message dated "now"; lookup must find it.
+	nowCoreData := (time.Now().Unix() - coreDataEpoch) * 1_000_000_000
+	if _, err := chatDB.Exec(`INSERT INTO message VALUES (2, 'fresh-out', 'just sent', NULL, ?, 1, NULL, 0, 0, '')`, nowCoreData); err != nil {
+		t.Fatalf("insert fresh: %v", err)
+	}
+	if _, err := chatDB.Exec(`INSERT INTO chat_message_join VALUES (1, 2)`); err != nil {
+		t.Fatalf("join fresh: %v", err)
+	}
+	chatDB.Close()
+
+	guid, err = LookupRecentOutgoingGUID(chatDBPath, "iMessage;-;+61437590462", time.Now().UnixMilli()-5000)
+	if err != nil {
+		t.Fatalf("lookup (fresh): %v", err)
+	}
+	if guid != "fresh-out" {
+		t.Errorf("guid = %q, want 'fresh-out'", guid)
+	}
+
+	// 3) Wrong chat GUID → empty.
+	guid, err = LookupRecentOutgoingGUID(chatDBPath, "iMessage;-;+61999999999", time.Now().UnixMilli()-5000)
+	if err != nil {
+		t.Fatalf("lookup (wrong chat): %v", err)
+	}
+	if guid != "" {
+		t.Errorf("expected empty for wrong chat, got %q", guid)
+	}
+}

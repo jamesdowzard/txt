@@ -20,6 +20,55 @@ import (
 // macOS Core Data epoch: 2001-01-01 00:00:00 UTC in Unix seconds.
 const coreDataEpoch = 978307200
 
+// LookupRecentOutgoingGUID opens chat.db read-only and returns the GUID of
+// the most recent outgoing message in the given chat that was sent at or
+// after sinceUnixMS. Empty string when no match. Used by the iMessage send
+// path to find the canonical chat.db GUID for a message we just sent via
+// osascript, so the local pending row can be stamped with the canonical
+// MessageID before the next 30s sync runs (avoiding a duplicate row).
+//
+// chatGUID is the conversation_id with the "imessage:" prefix already
+// stripped (e.g. "iMessage;-;+61437590462" or "any;-;+61437590462").
+func LookupRecentOutgoingGUID(chatDBPath, chatGUID string, sinceUnixMS int64) (string, error) {
+	if chatDBPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("user home: %w", err)
+		}
+		chatDBPath = filepath.Join(home, "Library", "Messages", "chat.db")
+	}
+	chatDB, err := sql.Open("sqlite", chatDBPath+"?mode=ro")
+	if err != nil {
+		return "", fmt.Errorf("open chat.db: %w", err)
+	}
+	defer chatDB.Close()
+	chatDB.SetMaxOpenConns(1)
+
+	// chat.db dates are nanoseconds since the Core Data epoch. Convert
+	// the Unix-ms threshold back to that frame.
+	sinceCoreData := (sinceUnixMS/1000 - coreDataEpoch) * 1_000_000_000
+
+	var guid string
+	err = chatDB.QueryRow(`
+		SELECT m.guid
+		FROM message m
+		JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+		JOIN chat c ON cmj.chat_id = c.ROWID
+		WHERE c.guid = ?
+		  AND m.is_from_me = 1
+		  AND m.date >= ?
+		ORDER BY m.date DESC
+		LIMIT 1
+	`, chatGUID, sinceCoreData).Scan(&guid)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query: %w", err)
+	}
+	return guid, nil
+}
+
 // iMessageAttachmentsRoot is where Messages.app stores attachment files.
 // chat.db records filenames with the literal "~/" prefix; the importer
 // normalises them to paths relative to this root so the runtime home dir

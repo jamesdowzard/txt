@@ -24,6 +24,7 @@ import (
 	"github.com/maxghenis/openmessage/internal/app"
 	"github.com/maxghenis/openmessage/internal/client"
 	"github.com/maxghenis/openmessage/internal/db"
+	"github.com/maxghenis/openmessage/internal/importer"
 	"github.com/maxghenis/openmessage/internal/story"
 	"github.com/maxghenis/openmessage/internal/whatsapplive"
 )
@@ -2088,11 +2089,12 @@ func serveIMessageAttachment(w http.ResponseWriter, msg *db.Message) error {
 }
 
 // sendIMessageText sends an outgoing iMessage by driving Messages.app via
-// AppleScript. The conversation participants are looked up from messages.db
-// (populated by the iMessage importer) and the first participant's handle
-// is used as the buddy address. Persists the outgoing message locally so
-// the UI shows it immediately; the next sync cycle will pick up the
-// canonical row from chat.db and dedupe via SourceID.
+// AppleScript, then resolves the canonical chat.db GUID and stamps the
+// local row with it so the next 30s sync UPSERTs (no duplicate row).
+//
+// Falls back to a synthetic "imessage-pending:" MessageID only if chat.db
+// hasn't surfaced the new row within ~2s — better to risk a temporary
+// duplicate later than to leave the UI without immediate feedback.
 func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) error, conversationID, message string) (*db.Message, error) {
 	if conversationID == "" || strings.TrimSpace(message) == "" {
 		return nil, errors.New("conversation_id and message are required")
@@ -2108,12 +2110,16 @@ func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) 
 	if err != nil {
 		return nil, err
 	}
+	// Snapshot the wall clock 1s before send to absorb clock skew between
+	// our process and Messages.app's chat.db write.
+	sinceMS := time.Now().UnixMilli() - 1000
 	if err := runAppleScriptSend(buddy, service, message); err != nil {
 		return nil, err
 	}
+	chatGUID := strings.TrimPrefix(conversationID, "imessage:")
+	canonicalGUID := pollForCanonicalGUID(chatGUID, sinceMS)
 	now := time.Now().UnixMilli()
 	msg := &db.Message{
-		MessageID:      fmt.Sprintf("imessage-pending:%s:%d", conversationID, now),
 		ConversationID: conversationID,
 		SenderName:     "Me",
 		Body:           message,
@@ -2122,10 +2128,33 @@ func sendIMessageText(store *db.Store, recordOutgoing func(*db.Message, string) 
 		IsFromMe:       true,
 		SourcePlatform: "imessage",
 	}
+	if canonicalGUID != "" {
+		msg.MessageID = "imessage:" + canonicalGUID
+		msg.SourceID = canonicalGUID
+	} else {
+		msg.MessageID = fmt.Sprintf("imessage-pending:%s:%d", conversationID, now)
+	}
 	if err := recordOutgoing(msg, ""); err != nil {
 		return nil, fmt.Errorf("local store: %w", err)
 	}
 	return msg, nil
+}
+
+// pollForCanonicalGUID polls chat.db up to 20 times at 100ms intervals for
+// a freshly-written outgoing message in the given chat. Returns the GUID
+// when found, or "" if the row never appears (osascript dropped the send,
+// chat.db locked, etc).
+//
+// var so tests can swap it for a deterministic stub.
+var pollForCanonicalGUID = func(chatGUID string, sinceMS int64) string {
+	for i := 0; i < 20; i++ {
+		guid, _ := importer.LookupRecentOutgoingGUID("", chatGUID, sinceMS)
+		if guid != "" {
+			return guid
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return ""
 }
 
 // pickIMessageBuddy reads the first participant from a conversation's
