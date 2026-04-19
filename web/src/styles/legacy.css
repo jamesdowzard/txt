@@ -3172,8 +3172,8 @@ body::after {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(11, 18, 31, 0.96);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+  background: var(--panel-glass);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(20px);
 }
 
